@@ -58,33 +58,46 @@ export async function cashInHand(orgId: string): Promise<{ receipts: number; pay
   return { receipts, payments, expenses, net: round2(receipts - payments - expenses) }
 }
 
-/** Parties owed amounts (receivables / payables). */
+/**
+ * Parties owed amounts (receivables / payables).
+ *
+ * Business rule (documented in DELETE /api/invoices/[id]): vouchers linked to a
+ * CANCELLED invoice remain valid money movements — they are counted here as
+ * party CREDIT (advance/overpaid), exactly like standalone vouchers. This keeps
+ * balances consistent with the cash report (which always counts vouchers).
+ * Balance aggregation is FULL-TABLE (not last-N) for every party.
+ */
 export async function partyDues(orgId: string) {
-  const [saleDues, purDues, customers, suppliers, standaloneReceipts, standalonePayments] = await Promise.all([
-    db.invoice.groupBy({
-      by: ['customerId'],
-      where: { orgId, type: 'SALE', status: { not: 'CANCELLED' }, customerId: { not: null } },
-      _sum: { paidAmount: false ? undefined : undefined },
-    }).catch(() => [] as never[]), // placeholder replaced below
+  const [purDues, customers, suppliers, standaloneReceipts, standalonePayments] = await Promise.all([
     db.invoice.findMany({
       where: { orgId, type: 'PURCHASE', status: { not: 'CANCELLED' }, supplierId: { not: null } },
       select: { supplierId: true, total: true, paidAmount: true },
     }),
     db.customer.findMany({ where: { orgId }, select: { id: true, name: true, phone: true, openingBalance: true } }),
     db.supplier.findMany({ where: { orgId }, select: { id: true, name: true, phone: true, openingBalance: true } }),
+    // Standalone receipts + receipts on CANCELLED invoices → customer credit.
     db.voucher.groupBy({
       by: ['customerId'],
-      where: { orgId, type: 'RECEIPT', customerId: { not: null }, invoiceId: null },
+      where: {
+        orgId,
+        type: 'RECEIPT',
+        customerId: { not: null },
+        OR: [{ invoiceId: null }, { invoice: { status: 'CANCELLED' } }],
+      },
       _sum: { amount: true },
     }),
+    // Standalone payments + payments on CANCELLED invoices → supplier credit.
     db.voucher.groupBy({
       by: ['supplierId'],
-      where: { orgId, type: 'PAYMENT', supplierId: { not: null }, invoiceId: null },
+      where: {
+        orgId,
+        type: 'PAYMENT',
+        supplierId: { not: null },
+        OR: [{ invoiceId: null }, { invoice: { status: 'CANCELLED' } }],
+      },
       _sum: { amount: true },
     }),
   ])
-
-  void saleDues
 
   const sales = await db.invoice.findMany({
     where: { orgId, type: 'SALE', status: { not: 'CANCELLED' }, customerId: { not: null } },

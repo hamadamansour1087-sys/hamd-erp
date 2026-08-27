@@ -1,5 +1,5 @@
 import { getSession, isStaff } from '@/lib/auth'
-import { ok, bad, str, optStr, num, forbidden, unauthorized } from '@/lib/api-helpers'
+import { ok, bad, str, optStr, signedMoney, round2, forbidden, unauthorized } from '@/lib/api-helpers'
 import { NextRequest } from 'next/server'
 import { db } from '@/lib/db'
 
@@ -53,7 +53,7 @@ export async function PUT(req: NextRequest, ctx: { params: Promise<{ id: string 
   // Financial field: only staff may touch the opening balance (server-enforced).
   if (body.openingBalance !== undefined) {
     if (!isStaff(s)) return forbidden()
-    data.openingBalance = num(body.openingBalance, 0)
+    data.openingBalance = round2(signedMoney(body.openingBalance, 0))
   }
   // Tenant-scoped write (defense in depth on top of the guard above).
   const row = await db.customer.updateMany({ where: { id, orgId: s.orgId }, data })
@@ -75,4 +75,3 @@ export async function DELETE(req: NextRequest, ctx: { params: Promise<{ id: stri
   return ok({ id })
 }
 
-void num

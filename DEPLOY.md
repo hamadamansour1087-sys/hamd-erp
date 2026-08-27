@@ -64,8 +64,13 @@ npx prisma generate
 
 # ملف البيئة — المسار يُضبط تلقائياً على مجلد المشروع الحالي:
 echo "DATABASE_URL=\"file:$(pwd)/db/custom.db\"" > .env
-# سرّ الجلسات (إلزامي للأمان):
+# سرّ الجلسات (إلزامي للأمان — بدون التطبيق يرفض العمل في الإنتاج):
 echo "AUTH_SECRET=$(openssl rand -base64 32)" >> .env
+# الوثوق بالـ reverse proxy لتقييد محاولات الدخول لكل IP حقيقي:
+echo "TRUST_PROXY=true" >> .env
+
+# تطبيق مخطط قاعدة البيانات (آمن — لا يحذف بيانات أبداً):
+npx prisma migrate deploy
 
 # البناء والتشغيل
 npm run build
@@ -91,6 +96,8 @@ server {
         proxy_set_header Connection "upgrade";
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
+        # يحذّث التطبيق حدّ محاولات الدخول لكل IP حقيقي (لا تجلب من العميل):
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
     }
 }
@@ -105,10 +112,16 @@ sudo certbot --nginx -d your-domain.com
 
 ✅ تطبيقك الآن على `https://your-domain.com`
 
-### 4) أول تسجيل دخول — مهم ⚠️
-- المستخدم التجريبي: `admin@tijara.app` / كلمة المرور: `123456`
-- **غيّر كلمة المرور فوراً** من الإعدادات ← المستخدمين، وأنشئ مستخدميك الحقيقيين.
-- تريد البدء بقاعدة **فارغة** بدل البيانات التجريبية؟ أوقف التطبيق، احذف `db/custom.db`، نفّذ `npx prisma db push`، ثم `pm2 restart hamd`.
+### 4) إنشاء حساب المدير — آمن بدون كلمات مرور افتراضية ⚠️
+- عند أول تشغيل افتح `https://your-domain.com` واختر **إنشاء متجر جديد** (نقطة `/register`) —
+  أول حساب تُنشئه يصبح **ADMIN** على مؤسستك الخاصة، ولا يوجد أي حساب افتراضي بأي كلمة مرور معروفة.
+- **لا تستخدم كلمة مرور ضعيفة** — سيُخزّن الهاش بـ scrypt ويُصدر رمز جلسة موقّع.
+- أضف بقية المستخدمين (مديرين/كاشير) من: الإعدادات ← المستخدمين.
+
+> ملاحظة أمنية: أي كلمة مرور قديمة وردت في نسخ تجريبية سابقة لم تعد صالحة — لا يوجد حساب افتراضي في الإنتاج.
+
+- تريد البدء بقاعدة **فارغة**؟ أوقف التطبيق، احذف `db/custom.db`، نفّذ `npx prisma migrate deploy`، ثم `pm2 restart hamd`.
+  (لا تستخدم `prisma db push --accept-data-loss` في الإنتاج أبداً — استخدم `migrate deploy` فقط).
 
 ---
 
@@ -124,6 +137,7 @@ sudo certbot --nginx -d your-domain.com
 | Build | `npm run build` |
 | Start | `npm run start` |
 | متغير `AUTH_SECRET` | قيمة عشوائية طويلة |
+| متغير `TRUST_PROXY` | `true` إذا خلف proxy المنصة |
 
 4. اربط الدومين من إعدادات المنصة (تضيف SSL تلقائياً).
 

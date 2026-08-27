@@ -64,8 +64,23 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
 
 /**
  * DELETE /api/invoices/[id] — staff cancels an invoice.
- * Restores stock (SALE) or removes purchased qty (PURCHASE) via reversal movements.
- * Existing payment vouchers are kept; status becomes CANCELLED and it's excluded from reports.
+ *
+ * BUSINESS RULES (explicit, documented):
+ *  1. Stock: SALE → quantities restored to the warehouse; PURCHASE → purchased
+ *     quantities removed. Every reversal is written to StockMovement with
+ *     kind SALE_CANCEL / PURCHASE_CANCEL + refId for a full audit trail.
+ *  2. Cost (PURCHASE only): product.cost is reverted to the price of the most
+ *     recent NON-CANCELLED purchase before this one. If no earlier purchase
+ *     exists, cost is left as-is (preserves any manual baseline cost).
+ *  3. Payment vouchers: EXISTING vouchers are KEPT (never silently deleted —
+ *     they represent money that physically moved). Consequences:
+ *     - cash report (cashInHand) still counts them — deliberate, the cash is real.
+ *     - party balances: vouchers linked to a CANCELLED invoice are counted as
+ *       party CREDIT (advance/overpaid) in partyDues() — so receivables/payables
+ *       stay consistent with the cash report.
+ *  4. Profit/sales reports exclude CANCELLED invoices entirely.
+ *  5. paidAmount on the cancelled invoice is preserved as history; the invoice
+ *     is excluded from all aggregated reports.
  */
 export async function DELETE(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   const s = await getSession(req)
@@ -84,7 +99,7 @@ export async function DELETE(req: NextRequest, ctx: { params: Promise<{ id: stri
 
   await db.$transaction(async (tx) => {
     for (const it of inv.items) {
-      const product = await tx.product.findUnique({ where: { id: it.productId }, select: { trackStock: true } })
+      const product = await tx.product.findFirst({ where: { id: it.productId, orgId: s.orgId }, select: { trackStock: true } })
       if (!product?.trackStock) continue
       const delta = inv.type === 'SALE' ? it.qty : -it.qty // restore on sale-cancel / remove on purchase-cancel
       await tx.stockLevel.upsert({
@@ -106,7 +121,27 @@ export async function DELETE(req: NextRequest, ctx: { params: Promise<{ id: stri
         },
       })
     }
-    await tx.invoice.update({ where: { id: inv.id }, data: { status: 'CANCELLED' } })
+
+    // PURCHASE cancel → revert product cost to the previous non-cancelled
+    // purchase price (business rule #2 above; keeps historical audit intact).
+    if (inv.type === 'PURCHASE') {
+      for (const it of inv.items) {
+        const prev = await tx.invoiceItem.findFirst({
+          where: {
+            productId: it.productId,
+            invoice: { orgId: s.orgId, type: 'PURCHASE', status: { not: 'CANCELLED' }, id: { not: inv.id } },
+          },
+          orderBy: [{ invoice: { date: 'desc' } }, { invoice: { number: 'desc' } }],
+          select: { price: true },
+        })
+        if (prev) {
+          await tx.product.updateMany({ where: { id: it.productId, orgId: s.orgId }, data: { cost: prev.price } })
+        }
+      }
+    }
+
+    // Tenant-scoped write: matches on id + orgId.
+    await tx.invoice.updateMany({ where: { id: inv.id, orgId: s.orgId }, data: { status: 'CANCELLED' } })
   })
 
   return ok({ id, status: 'CANCELLED' })

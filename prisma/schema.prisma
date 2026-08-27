@@ -16,7 +16,7 @@ model Org {
   taxPercent      Float    @default(14)
   phone           String?
   address         String?
-  logo            String? // data URL or http URL
+  logo            String? // data:image URL ONLY (policy enforced in settings/org API; remote http URLs rejected)
   invoiceTemplate String? // JSON blob for invoice/receipt designer
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
@@ -38,11 +38,14 @@ model Org {
 
 // Offline-sync dedupe: one row per logical client operation (per tenant).
 // Unique (orgId, key) guarantees a replayed mutation is executed at most once.
+// The key value embeds the operation scope ("invoice:", "voucher:" ...) and is
+// only ever replayed to the SAME userId (checked in withIdempotency()).
 model IdempotencyKey {
   id        String   @id @default(cuid())
   orgId     String
   org       Org      @relation(fields: [orgId], references: [id], onDelete: Cascade)
   userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   key       String   // "<scope>:<clientOperationId>"
   resultId  String?  // id of the created document once the operation commits
   createdAt DateTime @default(now())
@@ -69,6 +72,7 @@ model User {
   invoices     Invoice[]
   vouchers     Voucher[]
   expenses     Expense[]
+  idempotencyKeys IdempotencyKey[]
 }
 
 // Sequence numbers per tenant per doc type (INV / PUR / RCV / PMT / TRF)

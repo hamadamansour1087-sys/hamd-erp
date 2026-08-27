@@ -1,33 +1,11 @@
 import type { NextConfig } from "next";
 
 /**
- * NOTE on script-src: Next.js App Router inlines its flight-data <script>
- * blocks, and the presence of ANY hash/nonce in script-src makes browsers
- * IGNORE 'unsafe-inline' (CSP spec) — which breaks the whole app. So the
- * inline source is 'unsafe-inline' (no hashes). XSS exposure stays low:
- * React escapes all output and no user data is rendered via
- * dangerouslySetInnerHTML. Upgrading to a nonce-based CSP through middleware
- * is a documented follow-up (see SECURITY-AUDIT.md).
+ * Security headers (excluding CSP — that is set by src/middleware.ts with a
+ * per-request nonce; keeping CSP here would create a duplicate intersecting
+ * policy that defeats the nonce).
  */
-const csp = [
-  "default-src 'self'",
-  // 'unsafe-inline' for styles: Tailwind runtime + component libs inject <style> nodes;
-  // Google Fonts stylesheet is used by the print templates.
-  `style-src 'self' 'unsafe-inline' https://fonts.googleapis.com`,
-  `script-src 'self' 'unsafe-inline'`,
-  `font-src 'self' data: https://fonts.gstatic.com`,
-  `img-src 'self' data: blob:`,
-  `media-src 'self'`,
-  `connect-src 'self'`,
-  `frame-src 'self'`,
-  `base-uri 'self'`,
-  `form-action 'self'`,
-  `object-src 'none'`,
-  `frame-ancestors 'none'`,
-].join("; ");
-
 const securityHeaders = [
-  { key: "Content-Security-Policy", value: csp },
   { key: "X-Content-Type-Options", value: "nosniff" },
   { key: "X-Frame-Options", value: "DENY" },
   { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
@@ -42,6 +20,8 @@ const securityHeaders = [
 const nextConfig: NextConfig = {
   output: "standalone",
   reactStrictMode: false,
+  // Allow the sandbox preview host to load dev-only resources (dev mode only).
+  allowedDevOrigins: ["preview-chat-bbe12448-2e35-4d17-981f-1eee33355621.space-z.ai"],
   async headers() {
     return [
       { source: "/(.*)", headers: securityHeaders },

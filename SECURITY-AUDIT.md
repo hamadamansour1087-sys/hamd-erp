@@ -185,7 +185,7 @@
 | R1 | `script-src` يحتاج `'unsafe-inline'` (Next App Router يحقن سكربتات flight بدون nonce) | وجود hash/nonce يُبطل unsafe-inline وكسّر التطبيق فعلياً؛ النمط الآمن يتطلب middleware nonce + إعادة هيكلة layout | متوسطة | middleware يولّد nonce لكل طلب + قراءته في layout (نمط Next الرسمي)، ثم إزالة unsafe-inline |
 | R2 | الأموال `Float` في SQLite/Prisma | Prisma + SQLite ودعم Decimal محدود؛ التحويل يمسّ كل واجهة وحساب (مخاطرة انكسار واسعة قبل النشر مباشرة) | متوسطة (مخفَّفة بـ round2 عند كل كتابة + money() + سقوف) | التحويل إلى تخزين قروش (integers) أو ترقية Postgres+Decimal في مرحلة مخططة مع migration بيانات |
 | R3 | `User.email` فريد عالمياً → مؤسسة تستطيع حجز بريد مؤسسة أخرى | تسجيل الدخول يتم بالبريد فقط بدون سياق مؤسسة؛ التغيير يغيّر UX تسجيل الدخول | منخفضة | عند الحاجة: `@@unique([orgId, email])` + شاشة دخول بخطوة مؤسسة |
-| R4 | إلغاء فاتورة شراء لا يرجع `product.cost` السابق | السلوك الحالي مقصود (آخر تكلفة شراء) والرجوع يحتاج ledger لتاريخ التكاليف | منخفضة | جدول تكلفة تاريخية أو snapshot قبل التحديث |
+| R4 | ~~إلغاء فاتورة شراء لا يرجع `product.cost` السابق~~ **أُصلح في جولة التحقق المستقلة**: عند إلغاء PURCHASE تُرجع التكلفة إلى سعر آخر شراء غير ملغى قبله (اختبار 15) | — | مقفلة | — |
 | R5 | سندات فاتورة ملغاة تبقى في تقرير الصندوق | قرار تصميمي موجود: السند = نقد دخل فعلاً؛ المستحقات (partyDues) تستثني الملغاة أصلاً | منخفضة (منطق متسق مع الغرض) | إن رغبت: عكس السندات تلقائياً عند الإلغاء داخل الـ transaction |
 | R6 | إخفاء رقم فاتورة الكاشير للعرض: `المدفوع الآن` يظهر أحياناً كسر عائم (36.79999…) | خلل عرض client-side قديم غير أمني | منخفضة | تنسيق القيمة بـ toFixed(2) في POSView |
 | R7 | rate limiter في الذاكرة (ينمسح بإعادة التشغيل، لا يعمل عبر multi-instance) | نشر المستخدم instance واحد (VPS pm2) | منخفضة | Redis/backed limiter عند التوسع |
@@ -194,5 +194,54 @@
 
 1. على السيرفر: `AUTH_SECRET=$(openssl rand -base64 32)` **إلزامي** — بدونها الإنتاج يرفض الإقلاع.
 2. `npm run db:deploy` بدل db:push.
-3. غيّر كلمة مرور `admin@tijara.app / 123456` فوراً (تغييرها يقتل كل الجلسات القديمة تلقائياً).
+3. **لا يوجد حساب افتراضي** — أنشئ حساب المدير الأول من شاشة "إنشاء متجر جديد" (`/register` بكلمة مرور قوية). أي بيانات اعتماد قديمة وردت في نسخ تجريبية لم تعد صالحة (تغيّرها يقتل كل الجلسات القديمة تلقائياً).
 4. انسخ `db/custom.db` احتياطياً يومياً (cron في DEPLOY.md).
+
+---
+
+# 🔎 جولة التحقق المستقلة (Independent Verification Round) — بعد c52b8fb
+
+> التاريخ: 2026-08-27 · المنهجية: **الكود هو مصدر الحقيقة** — لم يُعتَد على هذا التقرير نفسه؛
+> كل بند أدناه تم التحقق منه بقراءة الكود الفعلي + اختبارات تُشغَّل من داخل المستودع.
+
+## ما تم التحقق منه فعلياً (VERIFIED) وإصلاحه (FIXED) في هذه الجولة
+
+| # | البند | نتيجة التحقق من الكود | الإصلاح | الاختبار |
+|---|---|---|---|---|
+| 1 | **Next.js version** | كان 16.1.3 (bun.lock) | ⬆️ **16.3.3** (latest stable) + eslint-config-next مطابق — bun install/typecheck/lint/test/build كلها خضراء | `bun.lock` + build exit 0 |
+| 2 | **الاختبارات داخل Git** | `tests/security` كانت **مستثناة بالخطأ في .gitignore** (لم تكن في المستودع) | أُزيل الاستثناء؛ `tests/security/security.test.ts` الآن متتبعة + توسّع من 27 إلى **45 اختباراً** | `git ls-files tests` + `bun test tests/security` = 45/45 |
+| 3 | **Idempotency user-scoping** | `withIdempotency()` كان يرد بنتيجة أي مستخدم في نفس org (تسريب نتيجة) | فحص `existing.userId === session.id` → 403 `duplicate-key-owner` لغير المالك؛ الـ scope جزء من المفتاح أصلاً | اختبار 12: نفس المستخدم → نفس النتيجة، مستخدم آخر → 403، org أخرى → مستقل |
+| 4 | **IdempotencyKey مرجعية userId** | كان عموداً بلا FK (orphan ممكن) | `userId → User(onDelete: Cascade)` + back-relation + migration `1_idempotency_user_fk` | `prisma migrate deploy` جاهز؛ FK في schema |
+| 5 | **Rate limiting / clientIp** | كان يأخذ **أول** قيمة من `X-Forwarded-For` القابل للتزييف | سياسة TRUST_PROXY: بدون proxy → دلو موحّد لا يتأثر بالترويسات؛ مع `TRUST_PROXY=true` → X-Real-IP (يُكتب فوقه) أو **أقصى يمين** XFF (يضيفه الـ proxy) | اختبار 10: تدوير XFF لا يفتح دلاءً جديدة |
+| 6 | **Logo policy** | `report-pdf.ts` كان يفعل `fetch(userProvidedHttpUrl)` في العميل | توحيد كامل: `data:image/` فقط في settings/org (server) + PDF + Excel + frontend (compressLogoFile) + CSP img-src | اختبار 14: http → 400، data:text/html → 400، data:image → 200 |
+| 7 | **Tenant-scoped writes** | `users/[id]` و`warehouses/[id]` و`vouchers/[id]` و`invoices/[id]` و`product.update` في POST /invoices كانت bare `where:{id}` بعد guard منفصل | تحويلها كلها إلى `updateMany/deleteMany` بـ `id + orgId` | اختبار 13: cross-org PUT → 404 + القيمة لا تتغير |
+| 8 | **CSP nonce-based** | كانت `'unsafe-inline'` (وثّقت كخطر متبقٍ R1) | ✅ منفذة الآن: `src/proxy.ts` (اتفاقية Next 16.3 الجديدة) يولّد nonce لكل طلب؛ layout يقرأه لسكربتاته؛ page.tsx أصبح server-wrapper + `force-dynamic` (الصفحة الثابتة كانت تُنتج inline scripts بلا nonce تُحجب) | **إثبات فعلي**: خادم إنتاج standalone → `script-src 'self' 'nonce-...' 'strict-dynamic'` + 4/4 inline scripts بـ nonce + agent-browser: تسجيل دخول ولوحة تحكم تعملان بصفر أخطاء console |
+| 9 | **Money audit** | `products` و`customers/suppliers openingBalance` كانت `num()` → تقبل سالب وكسور عائمة غير مُدوّرة | `round2(money())` للأسعار/التكاليف، `round2(signedMoney())` للأرصدة الموقّعة + إصلاح `invalid-due-date` 500→400 + أسماء مقتطعة 200 حرف | اختبارات 9 (0.1+0.2، 99.99، 100.01، 368.75، 19.99×3، 1e8+0.005) و17 (اقتطاع + سقف 500 عنصر) + `docs/MONEY-AUDIT.md` |
+| 10 | **Invoice cancellation** | قواعد السندات/الأرصدة لم تكن موثقة، ورصيد الطرف لم يكن يعكس سندات الفواتير الملغاة | توثيق صريح لقواعد العمل الخمس في DELETE route + سندات الفاتورة الملغاة تُحسب **رصيد دائن للطرف** في partyDues (اتساق كامل مع تقرير الصندوق) + إزالة كود ميت (saleDues placeholder) | اختبار 16: السند يبقى + الصندوق يعدّه + رصيد العميل −200 + حركة STOCK عكسية موجودة |
+| 11 | **Purchase cost history** | إلغاء شراء يترك product.cost على آخر سعر | قاعدة واضحة: التكلفة ترجع لآخر شراء **غير ملغى** قبله؛ إن لم يوجد شراء سابق تبقى كما هي (حفظ الإدخال اليدوي) | اختبار 15: 50→80→إلغاء→50 |
+| 12 | **Production docs** | DEPLOY.md كان فيه `db push` وأوراق اعتماد افتراضية | `prisma migrate deploy` فقط + secure bootstrap عبر `/register` بلا أي كلمة مرور افتراضية + `TRUST_PROXY=true` + ترويسة X-Forwarded-For في nginx | مراجعة DEPLOY.md النهائي |
+
+## أوامر التحقق ونتائجها الفعلية (TESTED)
+
+```
+bun install            → next@16.3.3 + eslint-config-next@16.3.3 (Saved lockfile)
+bun run lint           → نظيف (صفر مخرجات)
+bun run typecheck      → نظيف (tsc --noEmit)
+bun test tests/security → 45 pass / 0 fail (106 expect calls)
+bun run build          → ✓ Compiled successfully (Proxy مسجّل، 26 صفحة)
+```
+
+**تحقق إنتاج فعلي (standalone server على 3001):**
+- ترويسة CSP: `script-src 'self' 'nonce-…' 'strict-dynamic'` ✓ (بلا unsafe-inline)
+- 4/4 inline scripts تحمل `nonce="…"` ✓
+- agent-browser: الهبوط يعمل → تسجيل دخول admin@tijara.app يعمل → لوحة التحكم تعرض مؤشراتها (مبيعات اليوم/أرباح الشهر/التدفق النقدي) → **صفر أخطاء console و صفر حجب CSP**
+
+## المخاطر المتبقية (صادقة) — بعد هذه الجولة
+
+| الخطر | السبب | الأثر | التخفيف | الإصلاح المستقبلي |
+|---|---|---|---|---|
+| الأموال Float (وليس Decimal/ints) | ترحيل واسع لا يُجرى الآن بأمان قبل النشر | انحراف < 1e-9 لكل عملية، محصور بـ round2 عند كل كتابة | `round2(money())` إلزامي + سقوف + اختبارات | خطة موثقة في `docs/MONEY-AUDIT.md` (Postgres Decimal أو minor units) |
+| rate limiter في الذاكرة | النشر الحالي single-instance | تصفير الحدود بإعادة التشغيل؛ لا يعمل multi-instance | كافٍ لنشر pm2 واحد | Redis-backed عند التوسع |
+| dev CSP يسمح unsafe-inline/unsafe-eval | Turbopack HMR يتطلبهما | لا أثر إنتاجياً (شرط dev فقط، مشروط بـ NODE_ENV) | — | — |
+| strict-dynamic يسمح لسكربتات يحقنها السكربت الموقّع نفسه | طبيعة strict-dynamic القياسية | أقل صرامة من allowlist صريحة | CSP يبقى يمنع inline غير موقّع وأي مصدر خارجي غير 'self' | allowlist ثابتة للـ chunk hashes إن لزم |
+| 500+ عنصر في فاتورة يُقتطع صمتاً إلى 500 | سلوك قديم حافظ على توافق العملاء | بطء محتمل بطلبات ضخمة | سقف صارم 500 | رد 400 صريح مع هجرة العميل |

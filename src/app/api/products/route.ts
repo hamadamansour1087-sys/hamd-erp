@@ -2,8 +2,8 @@ import { getSession } from '@/lib/auth'
 import { NextRequest } from 'next/server'
 import { db } from '@/lib/db'
 
-import { unauthorized } from '@/lib/api-helpers'
-import { ok, bad, str, optStr, num } from '@/lib/api-helpers'
+import { unauthorized, boundedStr } from '@/lib/api-helpers'
+import { ok, bad, str, optStr, num, money, round2 } from '@/lib/api-helpers'
 
 /**
  * GET /api/products?q=&categoryId=&active=&page=&pageSize=
@@ -70,7 +70,7 @@ export async function POST(req: NextRequest) {
   if (!s) return unauthorized()
   if (s.role === 'CASHIER') return bad('forbidden', 403)
   const body = await req.json().catch(() => ({}))
-  const name = str(body.name)
+  const name = boundedStr(body.name, 200)
   if (!name) return bad('name-required')
 
   const created = await db.$transaction(async (tx) => {
@@ -83,9 +83,10 @@ export async function POST(req: NextRequest) {
         barcode: optStr(body.barcode),
         categoryId: optStr(body.categoryId),
         unitId: optStr(body.unitId),
-        cost: num(body.cost, 0),
-        price: num(body.price, 0),
-        minQty: num(body.minQty, 0),
+        // Money fields: finite, non-negative, rounded to 2dp (see docs/MONEY-AUDIT.md)
+        cost: round2(money(body.cost, 0)),
+        price: round2(money(body.price, 0)),
+        minQty: round2(money(body.minQty, 0)),
         trackStock: body.trackStock !== false,
         imageUrl: optStr(body.imageUrl),
         notes: optStr(body.notes),

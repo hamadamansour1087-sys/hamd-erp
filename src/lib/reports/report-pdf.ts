@@ -27,22 +27,15 @@ export interface PdfReportModel {
   filename: string
 }
 
-/** Convert any logo URL (http or data:) to a data URL so canvas stays untainted. */
-async function toDataUrl(url: string): Promise<string | null> {
-  try {
-    if (url.startsWith('data:')) return url
-    const res = await fetch(url, { mode: 'cors' })
-    if (!res.ok) return null
-    const blob = await res.blob()
-    return await new Promise((resolve) => {
-      const fr = new FileReader()
-      fr.onload = () => resolve(String(fr.result))
-      fr.onerror = () => resolve(null)
-      fr.readAsDataURL(blob)
-    })
-  } catch {
-    return null
-  }
+/**
+ * Logo policy (see SECURITY-AUDIT.md): data:image URLs ONLY.
+ * Remote http(s) logos are rejected everywhere — no client-side fetch of
+ * user-provided URLs, and the CSP (img-src 'self' data: blob:) blocks them
+ * at the browser level too.
+ */
+function toDataUrl(url: string | null | undefined): string | null {
+  if (url && url.startsWith('data:image/')) return url
+  return null
 }
 
 function buildContainer(model: PdfReportModel, logoUrl: string | null): HTMLDivElement {
@@ -136,7 +129,7 @@ export async function downloadReportPdf(model: PdfReportModel): Promise<void> {
     import('html2canvas-pro'),
   ])
 
-  const logoUrl = model.logo ? await toDataUrl(model.logo) : null
+  const logoUrl = toDataUrl(model.logo)
 
   const wrap = buildContainer(model, logoUrl)
   document.body.appendChild(wrap)

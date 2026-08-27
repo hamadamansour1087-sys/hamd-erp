@@ -33,6 +33,13 @@ export function _resetAuthSecretForTest() {
   cachedSecret = null
 }
 
+/** @internal test hook — craft a validly-signed token with an arbitrary expiry. */
+export function _createTokenWithExpForTest(userId: string, exp: number, tokenVersion = 0): string {
+  const payload: TokenPayload = { uid: userId, ver: tokenVersion, exp }
+  const body = b64url(JSON.stringify(payload))
+  return `${body}.${sign(body)}`
+}
+
 // ---------- Password hashing (scrypt, no external deps) ----------
 export function hashPassword(password: string): string {
   const salt = randomBytes(16).toString('hex')

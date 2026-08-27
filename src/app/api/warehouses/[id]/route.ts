@@ -22,10 +22,13 @@ export async function PUT(req: NextRequest, ctx: { params: Promise<{ id: string 
   if (body.isDefault === true && !wh.isDefault) {
     await db.$transaction([
       db.warehouse.updateMany({ where: { orgId: s.orgId }, data: { isDefault: false } }),
-      db.warehouse.update({ where: { id }, data: { isDefault: true } }),
+      db.warehouse.updateMany({ where: { id, orgId: s.orgId }, data: { isDefault: true } }),
     ])
   }
-  const row = await db.warehouse.update({ where: { id }, data })
+  // Tenant-scoped write: the update matches on id + orgId so it can never cross tenants.
+  const res = await db.warehouse.updateMany({ where: { id, orgId: s.orgId }, data })
+  if (res.count === 0) return bad('not-found', 404)
+  const row = await db.warehouse.findUnique({ where: { id } })
   return ok(row)
 }
 

@@ -1,5 +1,5 @@
 import { getSession, isStaff } from '@/lib/auth'
-import { ok, bad, str, optStr, num, forbidden, unauthorized } from '@/lib/api-helpers'
+import { ok, bad, str, optStr, money, round2, forbidden, unauthorized } from '@/lib/api-helpers'
 import { NextRequest } from 'next/server'
 import { db } from '@/lib/db'
 
@@ -46,7 +46,7 @@ export async function PUT(req: NextRequest, ctx: { params: Promise<{ id: string 
   if (str(body.name)) data.name = str(body.name)
   setIf(['nameEn', 'sku', 'barcode', 'imageUrl', 'notes'], (v) => optStr(v))
   setIf(['categoryId', 'unitId'], (v) => optStr(v))
-  setIf(['cost', 'price', 'minQty'], (v) => num(v, 0))
+  setIf(['cost', 'price', 'minQty'], (v) => round2(money(v, 0)))
   if (body.trackStock !== undefined) data.trackStock = !!body.trackStock
   if (body.active !== undefined) data.active = !!body.active
 

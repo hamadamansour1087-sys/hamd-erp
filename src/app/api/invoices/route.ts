@@ -217,7 +217,9 @@ export async function POST(req: NextRequest) {
   const status = paidAmount <= 0 ? 'UNPAID' : paidAmount >= total ? 'PAID' : 'PARTIAL'
   const notes = optStr(body.notes)
   const invoiceDate = typeof body.date === 'string' && !isNaN(new Date(body.date).getTime()) ? new Date(body.date) : new Date()
-  const dueDate = optStr(body.dueDate)
+  const dueDateRaw = optStr(body.dueDate)
+  if (dueDateRaw && isNaN(new Date(dueDateRaw).getTime())) return bad('invalid-due-date')
+  const dueDate = dueDateRaw
 
   const result = await withIdempotency(req, s, 'invoice', async () => {
     const created = await db.$transaction(async (tx) => {
@@ -280,10 +282,10 @@ export async function POST(req: NextRequest) {
       })
     }
 
-    // latest purchase updates product cost
+    // latest purchase updates product cost (tenant-scoped write)
     if (type === 'PURCHASE') {
       for (const it of normItems) {
-        await tx.product.update({ where: { id: it.productId }, data: { cost: it.price } })
+        await tx.product.updateMany({ where: { id: it.productId, orgId: s.orgId }, data: { cost: it.price } })
       }
     }
 

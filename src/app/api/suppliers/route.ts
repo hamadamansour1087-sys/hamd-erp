@@ -2,8 +2,8 @@ import { getSession } from '@/lib/auth'
 import { NextRequest } from 'next/server'
 import { db } from '@/lib/db'
 
-import { unauthorized } from '@/lib/api-helpers'
-import { ok, bad, str, optStr, num } from '@/lib/api-helpers'
+import { unauthorized, boundedStr } from '@/lib/api-helpers'
+import { ok, bad, str, optStr, signedMoney, round2 } from '@/lib/api-helpers'
 
 /** GET /api/suppliers?q= */
 export async function GET(req: NextRequest) {
@@ -26,7 +26,7 @@ export async function POST(req: NextRequest) {
   const s = await getSession(req)
   if (!s) return unauthorized()
   const body = await req.json().catch(() => ({}))
-  const name = str(body.name)
+  const name = boundedStr(body.name, 200)
   if (!name) return bad('name-required')
   const row = await db.supplier.create({
     data: {
@@ -34,7 +34,8 @@ export async function POST(req: NextRequest) {
       name,
       phone: optStr(body.phone),
       address: optStr(body.address),
-      openingBalance: num(body.openingBalance, 0),
+      // Signed balance: may be negative (credit). Finite + rounded (see docs/MONEY-AUDIT.md)
+      openingBalance: round2(signedMoney(body.openingBalance, 0)),
       notes: optStr(body.notes),
     },
   })

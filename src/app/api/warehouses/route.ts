@@ -2,7 +2,7 @@ import { getSession } from '@/lib/auth'
 import { NextRequest } from 'next/server'
 import { db } from '@/lib/db'
 
-import { unauthorized } from '@/lib/api-helpers'
+import { unauthorized, boundedStr } from '@/lib/api-helpers'
 import { ok, bad, str, optStr } from '@/lib/api-helpers'
 
 /** GET /api/warehouses — with product/level counts */
@@ -22,7 +22,7 @@ export async function POST(req: NextRequest) {
   const s = await getSession(req)
   if (!s) return unauthorized()
   const body = await req.json().catch(() => ({}))
-  const name = str(body.name)
+  const name = boundedStr(body.name, 200)
   if (!name) return bad('name-required')
   const row = await db.warehouse.create({
     data: { orgId: s.orgId, name, location: optStr(body.location), phone: optStr(body.phone) },

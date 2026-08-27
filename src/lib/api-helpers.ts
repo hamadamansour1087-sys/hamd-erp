@@ -58,6 +58,12 @@ export function money(v: unknown, fallback = 0): number {
   return Math.min(MAX_MONEY, Math.max(0, n))
 }
 
+/** Signed money value clamped to [-MAX_MONEY, MAX_MONEY] — for balances that may legitimately be negative. */
+export function signedMoney(v: unknown, fallback = 0): number {
+  const n = num(v, fallback)
+  return Math.min(MAX_MONEY, Math.max(-MAX_MONEY, n))
+}
+
 export function round2(n: number): number {
   return Math.round((n + Number.EPSILON) * 100) / 100
 }
@@ -94,6 +100,14 @@ export async function nextNumber(tx: { counter: any }, orgId: string, docKey: st
 
 // ─────────────────────────── rate limiting (in-memory) ───────────────────────────
 // Single-instance sliding window. For multi-instance deployments back this with Redis.
+//
+// IP resolution (clientIp): client-controlled X-Forwarded-For is NEVER trusted
+// directly — an attacker could rotate the header every request to get a fresh
+// bucket. Behind a trusted reverse proxy (nginx/caddy configured per DEPLOY.md
+// to set/overwrite X-Real-IP and append the real client to X-Forwarded-For)
+// set TRUST_PROXY=true to enable per-IP buckets. Without it, every request
+// falls into one conservative shared bucket — impossible to bypass via
+// headers (at the cost of users behind a shared NAT sharing the quota).
 
 interface Bucket {
   hits: number[]
@@ -120,12 +134,26 @@ export function rateLimit(key: string, limit: number, windowMs: number): boolean
   return true
 }
 
+/**
+ * Resolve the client IP for rate limiting.
+ * - TRUST_PROXY=true  → use X-Real-IP (overwritten by the proxy) or the
+ *   RIGHT-MOST X-Forwarded-For entry (appended by our own proxy, so it cannot
+ *   be spoofed by the client). Safe behind nginx/caddy per DEPLOY.md.
+ * - otherwise         → return a constant bucket key ('untrusted'). Client
+ *   headers are ignored entirely, so rotating X-Forwarded-For per request
+ *   cannot evade the limiter.
+ */
 export function clientIp(req: NextRequest): string {
-  return (
-    req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ||
-    req.headers.get('x-real-ip') ||
-    'local'
-  )
+  if (process.env.TRUST_PROXY === 'true') {
+    const real = req.headers.get('x-real-ip')?.trim()
+    if (real) return real
+    const xff = req.headers.get('x-forwarded-for')
+    if (xff) {
+      const parts = xff.split(',').map((s) => s.trim()).filter(Boolean)
+      if (parts.length > 0) return parts[parts.length - 1]
+    }
+  }
+  return 'untrusted'
 }
 
 // ─────────────────────────── idempotency guard ───────────────────────────
@@ -176,8 +204,13 @@ export async function withIdempotency<T>(
     // Unique (orgId, key) violated → this operation was already processed.
     const existing = await db.idempotencyKey.findUnique({
       where: { orgId_key: { orgId: session.orgId, key } },
-      select: { resultId: true },
+      select: { resultId: true, userId: true },
     })
+    // SECURITY: a replayed key is only honoured by its ORIGINAL OWNER. Another
+    // user in the same org must never receive another user's operation result.
+    if (existing && existing.userId !== session.id) {
+      return bad('duplicate-key-owner', 403)
+    }
     if (existing?.resultId) {
       return { reused: true, value: { id: existing.resultId } as T }
     }

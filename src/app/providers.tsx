@@ -148,14 +148,20 @@ function LocaleBridge({ children }: { children: React.ReactNode }) {
   )
 }
 
-export function Providers({ children }: { children: React.ReactNode }) {
+export function Providers({
+  children,
+  nonce,
+}: {
+  children: React.ReactNode
+  nonce?: string
+}) {
   React.useEffect(() => {
     initUIStore()
     registerSW()
   }, [])
 
   return (
-    <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
+    <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange nonce={nonce}>
       <LocaleBridge>{children}</LocaleBridge>
     </ThemeProvider>
   )

@@ -1,5 +1,5 @@
 import { getSession, hashPassword } from '@/lib/auth'
-import { ok, bad, str, unauthorized, forbidden } from '@/lib/api-helpers'
+import { ok, bad, str, unauthorized, forbidden, boundedStr } from '@/lib/api-helpers'
 import { NextRequest } from 'next/server'
 import { db } from '@/lib/db'
 
@@ -24,8 +24,8 @@ export async function POST(req: NextRequest) {
   if (!s) return unauthorized()
   if (s.role !== 'ADMIN') return forbidden()
   const body = await req.json().catch(() => ({}))
-  const name = str(body.name)
-  const email = str(body.email).toLowerCase()
+  const name = boundedStr(body.name, 200)
+  const email = boundedStr(str(body.email).toLowerCase(), 200)
   const password = typeof body.password === 'string' ? body.password : ''
   const role = ['ADMIN', 'MANAGER', 'CASHIER'].includes(str(body.role)) ? str(body.role) : 'CASHIER'
   if (!name || !email || password.length < 6) return bad('missing-fields')

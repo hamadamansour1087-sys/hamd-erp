@@ -45,11 +45,15 @@ export async function PUT(req: NextRequest, ctx: { params: Promise<{ id: string 
   if (body.active !== undefined && data.active === false) revokeSessions = true
   if (revokeSessions) data.tokenVersion = { increment: 1 }
 
-  // Scoped write: even though `target` was org-verified above, the update itself
-  // stays tenant-scoped so a race on id can never cross tenants.
-  const row = await db.user.update({
-    where: { id },
+  // Tenant-scoped write: `updateMany` matches on id + orgId so the mutation can
+  // never touch another tenant's user, even if `target` went stale above.
+  const updated = await db.user.updateMany({
+    where: { id, orgId: s.orgId },
     data,
+  })
+  if (updated.count === 0) return bad('not-found', 404)
+  const row = await db.user.findUnique({
+    where: { id },
     select: { id: true, name: true, email: true, role: true, active: true, createdAt: true },
   })
   return ok(row)
