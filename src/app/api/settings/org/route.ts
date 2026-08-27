@@ -33,10 +33,11 @@ export async function PUT(req: NextRequest) {
     if (body[k] !== undefined) data[k] = optStr(body[k])
   })
 
-  // logo as data URL — cap ~400KB to keep the bootstrap payload light
+  // logo as data URL only — remote http(s) URLs are rejected so the server never
+  // fetches attacker-controlled URLs (SSRF hardening at the source).
   if (body.logo !== undefined) {
     const logo = optStr(body.logo)
-    if (logo && (logo.length > 600_000 || !logo.startsWith('data:image/') && !logo.startsWith('http'))) {
+    if (logo && (logo.length > 600_000 || !logo.startsWith('data:image/'))) {
       return bad('invalid-logo')
     }
     data.logo = logo

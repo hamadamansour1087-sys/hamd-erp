@@ -1,9 +1,20 @@
-import { getSession } from '@/lib/auth'
+import { getSession, isStaff } from '@/lib/auth'
 import { NextRequest } from 'next/server'
 import { db } from '@/lib/db'
 
 import { unauthorized } from '@/lib/api-helpers'
-import { ok, bad, str, optStr, num } from '@/lib/api-helpers'
+import {
+  ok,
+  bad,
+  str,
+  optStr,
+  num,
+  forbidden,
+  money,
+  round2,
+  withIdempotency,
+  okIdempotent,
+} from '@/lib/api-helpers'
 
 /** GET /api/expenses?from=&to=&q=&page= */
 export async function GET(req: NextRequest) {
@@ -49,27 +60,33 @@ export async function GET(req: NextRequest) {
   })
 }
 
-/** POST /api/expenses { category, amount, method?, note?, date? } */
+/** POST /api/expenses { category, amount, method?, note?, date? } — staff only */
 export async function POST(req: NextRequest) {
   const s = await getSession(req)
   if (!s) return unauthorized()
+  // Authorization (server-side): expenses are a management operation.
+  if (!isStaff(s)) return forbidden()
   const body = await req.json().catch(() => ({}))
-  const amount = num(body.amount, 0)
+  const amount = round2(money(body.amount, 0))
   if (!(amount > 0)) return bad('amount-required')
   const method = ['CASH', 'BANK', 'CARD', 'WALLET'].includes(str(body.method)) ? str(body.method) : 'CASH'
-  const row = await db.expense.create({
-    data: {
-      orgId: s.orgId,
-      category: optStr(body.category) ?? 'عام',
-      amount,
-      method,
-      note: optStr(body.note),
-      userId: s.id,
-      date:
-        typeof body.date === 'string' && !isNaN(new Date(body.date).getTime())
-          ? new Date(body.date)
-          : new Date(),
-    },
+
+  const result = await withIdempotency(req, s, 'expense', async () => {
+    const row = await db.expense.create({
+      data: {
+        orgId: s.orgId,
+        category: optStr(body.category)?.slice(0, 120) ?? 'عام',
+        amount,
+        method,
+        note: optStr(body.note)?.slice(0, 500),
+        userId: s.id,
+        date:
+          typeof body.date === 'string' && !isNaN(new Date(body.date).getTime())
+            ? new Date(body.date)
+            : new Date(),
+      },
+    })
+    return row
   })
-  return ok(row)
+  return okIdempotent(result)
 }

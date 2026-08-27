@@ -297,6 +297,9 @@ async function collect(orgId: string, kind: ReportKind, days: number, lang: Exce
 
 async function resolveLogoImage(logo: string | null): Promise<{ buffer: Buffer; extension: 'png' | 'jpeg' } | null> {
   if (!logo) return null
+  // SSRF hardening: only inline data URLs are ever processed. The server must not
+  // fetch remote URLs — even ones stored by staff — so remote logos are skipped.
+  if (!logo.startsWith('data:')) return null
   try {
     if (logo.startsWith('data:')) {
       const m = /^data:image\/(png|jpe?g|svg\+xml);base64,(.+)$/.exec(logo)
@@ -307,20 +310,6 @@ async function resolveLogoImage(logo: string | null): Promise<{ buffer: Buffer; 
         return { buffer: buf, extension: 'png' }
       }
       return { buffer: Buffer.from(m[2], 'base64'), extension: m[1] === 'png' ? 'png' : 'jpeg' }
-    }
-    if (/^https?:\/\//i.test(logo)) {
-      const res = await fetch(logo, { signal: AbortSignal.timeout(6000) })
-      if (!res.ok) return null
-      const ct = res.headers.get('content-type') || ''
-      const raw = Buffer.from(await res.arrayBuffer())
-      if (ct.includes('svg') || logo.toLowerCase().endsWith('.svg')) {
-        const sharp = (await import('sharp')).default
-        const buf = await sharp(raw).resize(256, 256, { fit: 'inside' }).png().toBuffer()
-        return { buffer: buf, extension: 'png' }
-      }
-      if (ct.includes('png')) return { buffer: raw, extension: 'png' }
-      if (ct.includes('jpeg') || ct.includes('jpg')) return { buffer: raw, extension: 'jpeg' }
-      return null
     }
     return null
   } catch {

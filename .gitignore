@@ -69,3 +69,7 @@ db/*.db-shm
 
 # allow the example env template
 !.env.example
+
+# security test db
+db/test-*.db
+tests/security/*.db

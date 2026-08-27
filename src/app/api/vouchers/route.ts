@@ -1,5 +1,17 @@
 import { getSession, isStaff } from '@/lib/auth'
-import { ok, bad, str, optStr, num, round2, unauthorized, forbidden } from '@/lib/api-helpers'
+import {
+  ok,
+  bad,
+  str,
+  optStr,
+  num,
+  round2,
+  unauthorized,
+  forbidden,
+  money,
+  withIdempotency,
+  okIdempotent,
+} from '@/lib/api-helpers'
 import { NextRequest } from 'next/server'
 import { db } from '@/lib/db'
 
@@ -67,84 +79,108 @@ export async function GET(req: NextRequest) {
  * body { type:'RECEIPT'|'PAYMENT', amount, method?, partyType?, customerId?|supplierId?,
  *        invoiceId?, note?, date? }
  * When invoiceId given → adds to that invoice's paidAmount & recomputes its status.
+ *
+ * Financial integrity notes:
+ *  - CASHIER may take customer RECEIPTS (POS); PAYMENT (supplier payouts) is staff-only.
+ *  - paidAmount is updated with a compare-and-swap loop *inside* the transaction:
+ *    two concurrent payments can never silently overwrite each other (lost update).
  */
 export async function POST(req: NextRequest) {
   const s = await getSession(req)
   if (!s) return unauthorized()
   const body = await req.json().catch(() => ({}))
   const type = body.type === 'PAYMENT' ? 'PAYMENT' : 'RECEIPT'
-  const amount = num(body.amount, 0)
+  // Authorization (server-side): cashier takes receipts; supplier payouts are staff-only.
+  if (type === 'PAYMENT' && !isStaff(s)) return forbidden()
+
+  const amount = round2(money(body.amount, 0))
   if (!(amount > 0)) return bad('amount-required')
   const method = ['CASH', 'BANK', 'CARD', 'WALLET'].includes(str(body.method)) ? str(body.method) : 'CASH'
   const invoiceId = optStr(body.invoiceId)
   const customerId = optStr(body.customerId)
   const supplierId = optStr(body.supplierId)
 
-  let invoiceUpdate: { applyTo: { id: string; number: number; currentPaid: number; total: number } | null } = {
-    applyTo: null,
-  }
+  // Validate the linked invoice up-front (existence/type/state) — the money math
+  // itself happens inside the transaction below.
   if (invoiceId) {
     const inv = await db.invoice.findFirst({
       where: { id: invoiceId, orgId: s.orgId },
-      select: { id: true, number: true, status: true, paidAmount: true, total: true, type: true },
+      select: { id: true, status: true, type: true },
     })
     if (!inv) return bad('invoice-not-found')
     if (inv.status === 'CANCELLED') return bad('invoice-cancelled')
     const expectLinked = type === 'RECEIPT' ? 'SALE' : 'PURCHASE'
     if (inv.type !== expectLinked) return bad('invoice-type-mismatch')
-    invoiceUpdate.applyTo = { id: inv.id, number: inv.number, currentPaid: inv.paidAmount, total: inv.total }
   }
 
-  const created = await db.$transaction(async (tx) => {
-    const c = await tx.counter.upsert({
-      where: { orgId_docKey: { orgId: s.orgId, docKey: type === 'RECEIPT' ? 'RCV' : 'PMT' } },
-      create: { orgId: s.orgId, docKey: type === 'RECEIPT' ? 'RCV' : 'PMT', next: 2 },
-      update: { next: { increment: 1 } },
-    })
-    const number = c.next - 1 || 1
+  const result = await withIdempotency(req, s, 'voucher', async () => {
+    const created = await db.$transaction(async (tx) => {
+      const c = await tx.counter.upsert({
+        where: { orgId_docKey: { orgId: s.orgId, docKey: type === 'RECEIPT' ? 'RCV' : 'PMT' } },
+        create: { orgId: s.orgId, docKey: type === 'RECEIPT' ? 'RCV' : 'PMT', next: 2 },
+        update: { next: { increment: 1 } },
+      })
+      const number = c.next - 1 || 1
 
-    let partyName = optStr(body.partyName)
-    let partyType: string = str(body.partyType) || 'OTHER'
-    if (customerId) {
-      partyType = 'CUSTOMER'
-      if (!partyName) {
-        const cust = await tx.customer.findFirst({ where: { id: customerId, orgId: s.orgId }, select: { name: true } })
-        partyName = cust?.name ?? null
+      let partyName = optStr(body.partyName)
+      let partyType: string = str(body.partyType) || 'OTHER'
+      if (!['CUSTOMER', 'SUPPLIER', 'OTHER'].includes(partyType)) partyType = 'OTHER'
+      if (customerId) {
+        partyType = 'CUSTOMER'
+        if (!partyName) {
+          const cust = await tx.customer.findFirst({ where: { id: customerId, orgId: s.orgId }, select: { name: true } })
+          partyName = cust?.name ?? null
+        }
       }
-    }
-    if (supplierId) {
-      partyType = 'SUPPLIER'
-      if (!partyName) {
-        const sup = await tx.supplier.findFirst({ where: { id: supplierId, orgId: s.orgId }, select: { name: true } })
-        partyName = sup?.name ?? null
+      if (supplierId) {
+        partyType = 'SUPPLIER'
+        if (!partyName) {
+          const sup = await tx.supplier.findFirst({ where: { id: supplierId, orgId: s.orgId }, select: { name: true } })
+          partyName = sup?.name ?? null
+        }
       }
-    }
 
-    const voucher = await tx.voucher.create({
-      data: {
-        orgId: s.orgId,
-        number,
-        type,
-        method,
-        amount,
-        partyType,
-        partyName: partyName ?? (type === 'RECEIPT' ? 'سند قبض نقدي' : 'سند صرف'),
-        customerId: type === 'RECEIPT' ? customerId : null,
-        supplierId: type === 'PAYMENT' ? supplierId : null,
-        invoiceId,
-        note: optStr(body.note),
-        userId: s.id,
-        date: typeof body.date === 'string' && !isNaN(new Date(body.date).getTime()) ? new Date(body.date) : new Date(),
-      },
+      const voucher = await tx.voucher.create({
+        data: {
+          orgId: s.orgId,
+          number,
+          type,
+          method,
+          amount,
+          partyType,
+          partyName: partyName ?? (type === 'RECEIPT' ? 'سند قبض نقدي' : 'سند صرف'),
+          customerId: type === 'RECEIPT' ? customerId : null,
+          supplierId: type === 'PAYMENT' ? supplierId : null,
+          invoiceId,
+          note: optStr(body.note),
+          userId: s.id,
+          date: typeof body.date === 'string' && !isNaN(new Date(body.date).getTime()) ? new Date(body.date) : new Date(),
+        },
+      })
+
+      if (invoiceId) {
+        // Compare-and-swap: re-read paidAmount inside the write transaction and only
+        // apply when it is unchanged — concurrent payments retry instead of clobbering.
+        for (let attempt = 0; ; attempt++) {
+          const inv = await tx.invoice.findUnique({
+            where: { id: invoiceId },
+            select: { total: true, paidAmount: true },
+          })
+          if (!inv) throw new Error('invoice-vanished')
+          const newPaid = round2(Math.min(inv.total, inv.paidAmount + amount))
+          const status = newPaid <= 0 ? 'UNPAID' : newPaid >= inv.total ? 'PAID' : 'PARTIAL'
+          const upd = await tx.invoice.updateMany({
+            where: { id: invoiceId, paidAmount: inv.paidAmount },
+            data: { paidAmount: newPaid, status },
+          })
+          if (upd.count === 1) break
+          if (attempt >= 4) throw new Error('paid-amount-conflict')
+        }
+      }
+      return voucher
     })
-
-    if (invoiceUpdate.applyTo) {
-      const newPaid = round2(Math.min(invoiceUpdate.applyTo.total, invoiceUpdate.applyTo.currentPaid + amount))
-      const status = newPaid <= 0 ? 'UNPAID' : newPaid >= invoiceUpdate.applyTo.total ? 'PAID' : 'PARTIAL'
-      await tx.invoice.update({ where: { id: invoiceUpdate.applyTo.id }, data: { paidAmount: newPaid, status } })
-    }
-    return voucher
+    return created
   })
 
-  return ok(created)
+  return okIdempotent(result)
 }

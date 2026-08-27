@@ -37,7 +37,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
   })
 }
 
-/** PUT /api/customers/[id] */
+/** PUT /api/customers/[id] — CASHIER may edit contact info but NEVER openingBalance */
 export async function PUT(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   const s = await getSession(req)
   if (!s) return unauthorized()
@@ -50,9 +50,15 @@ export async function PUT(req: NextRequest, ctx: { params: Promise<{ id: string 
   ;['phone', 'address', 'notes'].forEach((k) => {
     if (body[k] !== undefined) data[k] = optStr(body[k])
   })
-  if (body.openingBalance !== undefined) data.openingBalance = num(body.openingBalance, 0)
-  const row = await db.customer.update({ where: { id }, data })
-  return ok(row)
+  // Financial field: only staff may touch the opening balance (server-enforced).
+  if (body.openingBalance !== undefined) {
+    if (!isStaff(s)) return forbidden()
+    data.openingBalance = num(body.openingBalance, 0)
+  }
+  // Tenant-scoped write (defense in depth on top of the guard above).
+  const row = await db.customer.updateMany({ where: { id, orgId: s.orgId }, data })
+  if (row.count === 0) return bad('not-found', 404)
+  return ok(await getCustomer(s.orgId, id))
 }
 
 /** DELETE /api/customers/[id] — staff only */
@@ -63,9 +69,9 @@ export async function DELETE(req: NextRequest, ctx: { params: Promise<{ id: stri
   const { id } = await ctx.params
   const customer = await getCustomer(s.orgId, id)
   if (!customer) return bad('not-found', 404)
-  const used = await db.invoice.count({ where: { customerId: id } })
+  const used = await db.invoice.count({ where: { orgId: s.orgId, customerId: id } })
   if (used > 0) return bad('in-use')
-  await db.customer.delete({ where: { id } })
+  await db.customer.deleteMany({ where: { id, orgId: s.orgId } })
   return ok({ id })
 }
 

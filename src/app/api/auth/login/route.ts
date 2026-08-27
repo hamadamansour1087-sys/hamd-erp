@@ -1,10 +1,11 @@
 import { createToken, sessionCookie, verifyPassword } from '@/lib/auth'
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
+import { rateLimit, clientIp, tooMany } from '@/lib/api-helpers'
 
 import { str } from '@/lib/api-helpers'
 
-/** POST /api/auth/login — issue session cookie for an active user */
+/** POST /api/auth/login — issue session cookie for an active user (brute-force protected) */
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json().catch(() => ({}))
@@ -13,6 +14,13 @@ export async function POST(req: NextRequest) {
     if (!email || !password) {
       return NextResponse.json({ error: 'invalid' }, { status: 400 })
     }
+
+    // Anti brute-force: per-IP and per-account sliding windows.
+    const ip = clientIp(req)
+    if (!rateLimit(`login:ip:${ip}`, 20, 5 * 60_000) || !rateLimit(`login:acct:${email}`, 10, 5 * 60_000)) {
+      return tooMany()
+    }
+
     const user = await db.user.findUnique({
       where: { email },
       include: { org: true },
@@ -20,7 +28,7 @@ export async function POST(req: NextRequest) {
     if (!user || !user.active || !verifyPassword(password, user.passwordHash)) {
       return NextResponse.json({ error: 'invalid' }, { status: 401 })
     }
-    const token = createToken(user.id)
+    const token = createToken(user.id, user.tokenVersion)
     const res = NextResponse.json({
       data: {
         user: {

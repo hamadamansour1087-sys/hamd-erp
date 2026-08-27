@@ -39,10 +39,10 @@ export async function DELETE(req: NextRequest, ctx: { params: Promise<{ id: stri
   if (!wh) return bad('not-found', 404)
   if (wh.isDefault) return bad('cannot-delete-default')
   const [inStock, inInvoices] = await Promise.all([
-    db.stockLevel.count({ where: { warehouseId: id, qty: { gt: 0 } } }),
-    db.invoice.count({ where: { warehouseId: id } }),
+    db.stockLevel.count({ where: { warehouseId: id, qty: { gt: 0 }, warehouse: { orgId: s.orgId } } }),
+    db.invoice.count({ where: { orgId: s.orgId, warehouseId: id } }),
   ])
   if (inStock > 0 || inInvoices > 0) return bad('in-use')
-  await db.warehouse.delete({ where: { id } })
+  await db.warehouse.deleteMany({ where: { id, orgId: s.orgId } })
   return ok({ id })
 }

@@ -1,18 +1,29 @@
-import { getSession } from '@/lib/auth'
+import { getSession, isStaff } from '@/lib/auth'
 import { NextRequest } from 'next/server'
 import { db } from '@/lib/db'
 
 import { unauthorized } from '@/lib/api-helpers'
-import { ok, bad, str, optStr, round2 } from '@/lib/api-helpers'
+import {
+  ok,
+  bad,
+  str,
+  optStr,
+  round2,
+  forbidden,
+  withIdempotency,
+  okIdempotent,
+} from '@/lib/api-helpers'
 
 /**
- * POST /api/stock/adjust — physical count correction.
+ * POST /api/stock/adjust — physical count correction (staff only).
  * body { warehouseId, productId, newQty, reason? }
  * Records an ADJUST_IN / ADJUST_OUT ledger movement with the delta.
  */
 export async function POST(req: NextRequest) {
   const s = await getSession(req)
   if (!s) return unauthorized()
+  // Authorization (server-side): stock adjustments are a management operation.
+  if (!isStaff(s)) return forbidden()
   const body = await req.json().catch(() => ({}))
   const warehouseId = str(body.warehouseId)
   const productId = str(body.productId)
@@ -26,9 +37,10 @@ export async function POST(req: NextRequest) {
 
   if (body.newQty === undefined || body.newQty === null) return bad('qty-invalid')
   const newQty = round2(Number(body.newQty))
-  if (!Number.isFinite(newQty)) return bad('qty-invalid')
+  if (!Number.isFinite(newQty) || newQty < 0) return bad('qty-invalid')
   const reason = optStr(body.reason)
 
+  const result = await withIdempotency(req, s, 'stock-adjust', async () => {
   const adjusted = await db.$transaction(async (tx) => {
     const existing = await tx.stockLevel.findUnique({
       where: { productId_warehouseId: { productId, warehouseId } },
@@ -59,6 +71,9 @@ export async function POST(req: NextRequest) {
     })
     return { changed: true as const, oldQty, newQty }
   })
+  // Synthetic id so idempotent replays resolve to this operation.
+  return { id: `adjust:${productId}:${warehouseId}`, ...adjusted, productId, warehouseId }
+  })
 
-  return ok({ ...adjusted, productId, warehouseId })
+  return okIdempotent(result)
 }

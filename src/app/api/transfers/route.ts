@@ -1,5 +1,16 @@
 import { getSession, isStaff } from '@/lib/auth'
-import { ok, bad, str, optStr, num, round2, unauthorized, forbidden } from '@/lib/api-helpers'
+import {
+  ok,
+  bad,
+  str,
+  optStr,
+  num,
+  round2,
+  unauthorized,
+  forbidden,
+  withIdempotency,
+  okIdempotent,
+} from '@/lib/api-helpers'
 import { NextRequest } from 'next/server'
 import { db } from '@/lib/db'
 
@@ -51,13 +62,14 @@ export async function GET(req: NextRequest) {
 }
 
 /**
- * POST /api/transfers — move stock between warehouses.
+ * POST /api/transfers — move stock between warehouses (staff only).
  * body { fromWarehouseId, toWarehouseId, items:[{productId, qty}], note? }
  */
 export async function POST(req: NextRequest) {
   const s = await getSession(req)
   if (!s) return unauthorized()
-  if (!isStaff(s) && s.role !== 'CASHIER') return forbidden() // any signed-in role may move stock; kept explicit
+  // Authorization (server-side): stock transfers are a management operation.
+  if (!isStaff(s)) return forbidden()
   const body = await req.json().catch(() => ({}))
   const fromId = str(body.fromWarehouseId)
   const toId = str(body.toWarehouseId)
@@ -88,7 +100,8 @@ export async function POST(req: NextRequest) {
   }
   if (items.length === 0) return bad('items-invalid')
 
-  const created = await db.$transaction(async (tx) => {
+  const result = await withIdempotency(req, s, 'transfer', async () => {
+    const created = await db.$transaction(async (tx) => {
     const c = await tx.counter.upsert({
       where: { orgId_docKey: { orgId: s.orgId, docKey: 'TRF' } },
       create: { orgId: s.orgId, docKey: 'TRF', next: 2 },
@@ -154,5 +167,8 @@ export async function POST(req: NextRequest) {
     return transfer
   })
 
-  return ok({ id: created.id, number: created.number, itemCount: items.length })
+    return { id: created.id, number: created.number, itemCount: items.length }
+  })
+
+  return okIdempotent(result)
 }

@@ -37,7 +37,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
   })
 }
 
-/** PUT /api/suppliers/[id] */
+/** PUT /api/suppliers/[id] — CASHIER may edit contact info but NEVER openingBalance */
 export async function PUT(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   const s = await getSession(req)
   if (!s) return unauthorized()
@@ -50,9 +50,14 @@ export async function PUT(req: NextRequest, ctx: { params: Promise<{ id: string 
   ;['phone', 'address', 'notes'].forEach((k) => {
     if (body[k] !== undefined) data[k] = optStr(body[k])
   })
-  if (body.openingBalance !== undefined) data.openingBalance = num(body.openingBalance, 0)
-  const row = await db.supplier.update({ where: { id }, data })
-  return ok(row)
+  // Financial field: only staff may touch the opening balance (server-enforced).
+  if (body.openingBalance !== undefined) {
+    if (!isStaff(s)) return forbidden()
+    data.openingBalance = num(body.openingBalance, 0)
+  }
+  const row0 = await db.supplier.updateMany({ where: { id, orgId: s.orgId }, data })
+  if (row0.count === 0) return bad('not-found', 404)
+  return ok(await getSupplier(s.orgId, id))
 }
 
 /** DELETE /api/suppliers/[id] — staff only */
@@ -63,9 +68,9 @@ export async function DELETE(req: NextRequest, ctx: { params: Promise<{ id: stri
   const { id } = await ctx.params
   const supplier = await getSupplier(s.orgId, id)
   if (!supplier) return bad('not-found', 404)
-  const used = await db.invoice.count({ where: { supplierId: id } })
+  const used = await db.invoice.count({ where: { orgId: s.orgId, supplierId: id } })
   if (used > 0) return bad('in-use')
-  await db.supplier.delete({ where: { id } })
+  await db.supplier.deleteMany({ where: { id, orgId: s.orgId } })
   return ok({ id })
 }
 

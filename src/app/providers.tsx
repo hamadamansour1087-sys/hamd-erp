@@ -84,6 +84,9 @@ function QueueFlusher() {
         } else if (res.failed) {
           toast.warning(t('shell.syncFailedToast'))
         }
+        if (res.held > 0) {
+          toast.info(t('shell.syncHeldToast', { n: res.held }))
+        }
       } finally {
         syncing = false
       }

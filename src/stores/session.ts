@@ -2,6 +2,7 @@
 
 import { create } from 'zustand'
 import type { OrgDTO, SessionUser } from '@/lib/types'
+import { clearGetCache } from '@/lib/offline/cache-purge'
 
 interface SessionState {
   user: SessionUser | null
@@ -32,6 +33,12 @@ export const useSession = create<SessionState>((set) => ({
   booted: false,
   bootFailed: false,
   setSession: (user, org) => {
+    try {
+      // Identity switch must never serve cached GET responses from another account.
+      const prev = useSession.getState().user
+      if (prev && user && prev.id !== user.id) clearGetCache()
+      if (prev && !user) clearGetCache()
+    } catch {}
     try {
       if (user && org) localStorage.setItem(CACHE_KEY, JSON.stringify({ user, org }))
       else localStorage.removeItem(CACHE_KEY)
@@ -72,6 +79,9 @@ export const useSession = create<SessionState>((set) => ({
     try {
       localStorage.removeItem(CACHE_KEY)
     } catch {}
+    // Purge every cached GET response — queued offline mutations are intentionally
+    // kept but can only be replayed after re-login as the SAME user (see queue.ts).
+    clearGetCache()
     set({ user: null, org: null, booted: true })
   },
 }))

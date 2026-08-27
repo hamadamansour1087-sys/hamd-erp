@@ -2,11 +2,14 @@ import { createToken, hashPassword, sessionCookie } from '@/lib/auth'
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 
-import { str } from '@/lib/api-helpers'
+import { str, rateLimit, clientIp, tooMany } from '@/lib/api-helpers'
 
 /** POST /api/auth/register — create a new tenant (org) + its ADMIN owner */
 export async function POST(req: NextRequest) {
   try {
+    // Anti-abuse: 5 registrations per hour per IP.
+    if (!rateLimit(`register:${clientIp(req)}`, 5, 60 * 60_000)) return tooMany()
+
     const body = await req.json().catch(() => ({}))
     const orgName = str(body.orgName)
     const name = str(body.name)
@@ -54,7 +57,7 @@ export async function POST(req: NextRequest) {
       return { org, user }
     })
 
-    const token = createToken(result.user.id)
+    const token = createToken(result.user.id, result.user.tokenVersion)
     const res = NextResponse.json({
       data: {
         user: {

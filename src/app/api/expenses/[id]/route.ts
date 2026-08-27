@@ -13,6 +13,6 @@ export async function DELETE(req: NextRequest, ctx: { params: Promise<{ id: stri
   const { id } = await ctx.params
   const row = await db.expense.findFirst({ where: { id, orgId: s.orgId } })
   if (!row) return bad('not-found', 404)
-  await db.expense.delete({ where: { id } })
+  await db.expense.deleteMany({ where: { id, orgId: s.orgId } })
   return ok({ id })
 }

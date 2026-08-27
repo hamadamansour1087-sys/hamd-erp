@@ -33,6 +33,22 @@ model Org {
   expenses     Expense[]
   transfers    Transfer[]
   counters     Counter[]
+  idempotency  IdempotencyKey[]
+}
+
+// Offline-sync dedupe: one row per logical client operation (per tenant).
+// Unique (orgId, key) guarantees a replayed mutation is executed at most once.
+model IdempotencyKey {
+  id        String   @id @default(cuid())
+  orgId     String
+  org       Org      @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  userId    String
+  key       String   // "<scope>:<clientOperationId>"
+  resultId  String?  // id of the created document once the operation commits
+  createdAt DateTime @default(now())
+
+  @@unique([orgId, key])
+  @@index([orgId, createdAt])
 }
 
 model User {
@@ -44,6 +60,9 @@ model User {
   passwordHash String
   role         String   @default("ADMIN") // ADMIN | MANAGER | CASHIER
   active       Boolean  @default(true)
+  // Bumped whenever the password changes or an admin deactivates → all
+  // previously-issued session tokens become invalid immediately.
+  tokenVersion Int      @default(0)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 

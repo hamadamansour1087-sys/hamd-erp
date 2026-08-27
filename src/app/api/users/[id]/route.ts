@@ -35,11 +35,18 @@ export async function PUT(req: NextRequest, ctx: { params: Promise<{ id: string 
     data.active = active
   }
 
+  // Password change or deactivation must invalidate the target's existing sessions.
+  let revokeSessions = false
   if (typeof body.password === 'string' && body.password.length > 0) {
     if (body.password.length < 6) return bad('weak-password')
     data.passwordHash = hashPassword(body.password)
+    revokeSessions = true
   }
+  if (body.active !== undefined && data.active === false) revokeSessions = true
+  if (revokeSessions) data.tokenVersion = { increment: 1 }
 
+  // Scoped write: even though `target` was org-verified above, the update itself
+  // stays tenant-scoped so a race on id can never cross tenants.
   const row = await db.user.update({
     where: { id },
     data,

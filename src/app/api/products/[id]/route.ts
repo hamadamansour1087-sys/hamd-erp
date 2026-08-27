@@ -50,8 +50,13 @@ export async function PUT(req: NextRequest, ctx: { params: Promise<{ id: string 
   if (body.trackStock !== undefined) data.trackStock = !!body.trackStock
   if (body.active !== undefined) data.active = !!body.active
 
-  const row = await db.product.update({ where: { id }, data, include: { levels: true } })
-  return ok(row)
+  const row = await db.product.updateMany({ where: { id, orgId: s.orgId }, data })
+  if (row.count === 0) return bad('not-found', 404)
+  const fresh = await db.product.findFirst({
+    where: { id, orgId: s.orgId },
+    include: { levels: true },
+  })
+  return ok(fresh)
 }
 
 /** DELETE /api/products/[id] — soft delete (deactivate); hard delete allowed when unused */
@@ -67,9 +72,9 @@ export async function DELETE(req: NextRequest, ctx: { params: Promise<{ id: stri
   if (!existing) return bad('not-found', 404)
 
   if (existing._count.items > 0) {
-    await db.product.update({ where: { id }, data: { active: false } })
+    await db.product.updateMany({ where: { id, orgId: s.orgId }, data: { active: false } })
     return ok({ id, deactivated: true })
   }
-  await db.product.delete({ where: { id } })
+  await db.product.deleteMany({ where: { id, orgId: s.orgId } })
   return ok({ id, deactivated: false })
 }

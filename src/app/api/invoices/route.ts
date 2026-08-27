@@ -1,5 +1,17 @@
-import { getSession, isStaff } from '@/lib/auth'
-import { ok, bad, str, optStr, num, round2, unauthorized, forbidden } from '@/lib/api-helpers'
+import { getSession } from '@/lib/auth'
+import {
+  ok,
+  bad,
+  str,
+  optStr,
+  num,
+  round2,
+  unauthorized,
+  forbidden,
+  money,
+  withIdempotency,
+  okIdempotent,
+} from '@/lib/api-helpers'
 import { NextRequest } from 'next/server'
 import { db } from '@/lib/db'
 
@@ -99,12 +111,14 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const s = await getSession(req)
   if (!s) return unauthorized()
-  if (s.role === 'CASHIER' && !req.url.includes('/api/invoices')) return forbidden()
 
   const body = await req.json().catch(() => ({}))
   const type = body.type === 'PURCHASE' ? 'PURCHASE' : 'SALE'
+  // Authorization (server-side): CASHIER may create SALES (POS) but never PURCHASES.
+  if (s.role === 'CASHIER' && type === 'PURCHASE') return forbidden()
+
   const itemsInput: Array<{ productId?: unknown; qty?: unknown; price?: unknown }> = Array.isArray(body.items)
-    ? body.items
+    ? body.items.slice(0, 500)
     : []
   if (itemsInput.length === 0) return bad('items-required')
 
@@ -188,15 +202,16 @@ export async function POST(req: NextRequest) {
   if (normItems.length === 0) return bad('items-invalid')
 
   const subtotal = round2(normItems.reduce((sum, it) => sum + it.qty * it.price, 0))
-  let discount = num(body.discount, 0)
-  discount = Math.max(0, Math.min(discount, subtotal))
-  const taxPercent = body.taxPercent !== undefined ? Math.max(0, num(body.taxPercent, 0)) : undefined
+  let discount = money(body.discount, 0)
+  discount = Math.min(discount, subtotal)
+  // Tax percent must stay in a sane range — never negative, never above 100.
+  const taxPercent = body.taxPercent !== undefined ? Math.min(100, Math.max(0, num(body.taxPercent, 0))) : undefined
   const taxPercentFinal = taxPercent !== undefined ? taxPercent : (await db.org.findUnique({ where: { id: s.orgId }, select: { taxPercent: true } }))?.taxPercent ?? 14
   const taxAmount = round2(((subtotal - discount) * taxPercentFinal) / 100)
   const total = round2(subtotal - discount + taxAmount)
   const costTotal = round2(normItems.reduce((sum, it) => sum + it.qty * it.costAtSale, 0))
 
-  let paidAmount = Math.max(0, num(body.paidAmount, 0))
+  let paidAmount = money(body.paidAmount, 0)
   paidAmount = Math.min(paidAmount, total)
   const paidMethod = ['CASH', 'BANK', 'CARD', 'WALLET'].includes(str(body.paidMethod)) ? str(body.paidMethod) : 'CASH'
   const status = paidAmount <= 0 ? 'UNPAID' : paidAmount >= total ? 'PAID' : 'PARTIAL'
@@ -204,7 +219,8 @@ export async function POST(req: NextRequest) {
   const invoiceDate = typeof body.date === 'string' && !isNaN(new Date(body.date).getTime()) ? new Date(body.date) : new Date()
   const dueDate = optStr(body.dueDate)
 
-  const created = await db.$transaction(async (tx) => {
+  const result = await withIdempotency(req, s, 'invoice', async () => {
+    const created = await db.$transaction(async (tx) => {
     const number = await nextDocNumber(tx, s.orgId, type === 'SALE' ? 'INV' : 'PUR')
     const invoice = await tx.invoice.create({
       data: {
@@ -301,11 +317,14 @@ export async function POST(req: NextRequest) {
     return { invoice, voucherNumber }
   })
 
-  // touch product cost not needed for SALE
+    return {
+      id: created.invoice.id,
+      number: created.invoice.number,
+      voucherNumber: created.voucherNumber,
+    }
+  })
 
-  return ok({
-    id: created.invoice.id,
-    number: created.invoice.number,
+  return okIdempotent(result, (v) => ({
     type,
     status,
     subtotal,
@@ -314,10 +333,10 @@ export async function POST(req: NextRequest) {
     taxAmount,
     total,
     paidAmount,
-    voucherNumber: created.voucherNumber,
     warnings,
     queued: false,
-  })
+    invoice: v,
+  }))
 }
 
 async function nextDocNumber(tx: any, orgId: string, docKey: string): Promise<number> {
@@ -341,5 +360,3 @@ function findSupplierName(tx: any, orgId: string, id: string | null) {
     .findFirst({ where: { id, orgId }, select: { name: true } })
     .then((r: { name: string } | null) => r?.name ?? null)
 }
-
-void isStaff
