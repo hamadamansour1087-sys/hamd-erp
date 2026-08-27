@@ -238,6 +238,11 @@ model Invoice {
   number        Int
   type          String // SALE | PURCHASE
   status        String   @default("UNPAID") // UNPAID | PARTIAL | PAID | CANCELLED
+  // Crash-window dedupe: set (inside the creation transaction) to the scoped
+  // Idempotency-Key when the client sends one. @@unique makes a replayed request
+  // hit the document itself — even if the idempotency CLAIM was lost after the
+  // financial COMMIT (server crash), a retry can never create a second invoice.
+  clientOperationId String?
   customerId    String?
   customer      Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
   supplierId    String?
@@ -261,6 +266,7 @@ model Invoice {
   vouchers Voucher[]
 
   @@unique([orgId, type, number])
+  @@unique([orgId, clientOperationId])
   @@index([orgId, date])
   @@index([orgId, status])
   @@index([customerId])
@@ -294,6 +300,8 @@ model Voucher {
   type        String // RECEIPT | PAYMENT
   method      String   @default("CASH") // CASH | BANK | CARD | WALLET
   amount      Float
+  // Crash-window dedupe anchor (same pattern as Invoice.clientOperationId).
+  clientOperationId String?
   partyType   String   @default("OTHER") // CUSTOMER | SUPPLIER | OTHER
   partyName   String? // free text for OTHER or snapshot
   customerId  String?
@@ -308,6 +316,7 @@ model Voucher {
   date        DateTime @default(now())
 
   @@unique([orgId, type, number])
+  @@unique([orgId, clientOperationId])
   @@index([orgId, date])
 }
 
@@ -323,6 +332,10 @@ model Expense {
   user     User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
   date     DateTime @default(now())
 
+  // Crash-window dedupe anchor (same pattern as Invoice.clientOperationId).
+  clientOperationId String?
+
+  @@unique([orgId, clientOperationId])
   @@index([orgId, date])
 }
 
@@ -341,8 +354,12 @@ model Transfer {
   userId           String?
   createdAt        DateTime @default(now())
 
+  // Crash-window dedupe anchor (same pattern as Invoice.clientOperationId).
+  clientOperationId String?
+
   items TransferItem[]
 
+  @@unique([orgId, clientOperationId])
   @@index([orgId])
 }
 

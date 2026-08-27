@@ -1,9 +1,9 @@
-import { getSession } from '@/lib/auth'
+import { getSession, isStaff } from '@/lib/auth'
 import { NextRequest } from 'next/server'
 import { db } from '@/lib/db'
 
 import { unauthorized, boundedStr } from '@/lib/api-helpers'
-import { ok, bad, str, optStr, signedMoney, round2 } from '@/lib/api-helpers'
+import { ok, bad, str, optStr, signedMoney, round2, forbidden } from '@/lib/api-helpers'
 
 /** GET /api/suppliers?q= */
 export async function GET(req: NextRequest) {
@@ -21,13 +21,21 @@ export async function GET(req: NextRequest) {
   return ok(rows)
 }
 
-/** POST /api/suppliers { name, phone?, address?, openingBalance? } */
+/**
+ * POST /api/suppliers { name, phone?, address?, openingBalance? }
+ *
+ * AUTHORIZATION (server-side): openingBalance is a financial field. A CASHIER may
+ * create suppliers but must NEVER set a non-zero opening balance — only
+ * ADMIN/MANAGER can. Zero/absent openingBalance is allowed for cashiers.
+ */
 export async function POST(req: NextRequest) {
   const s = await getSession(req)
   if (!s) return unauthorized()
   const body = await req.json().catch(() => ({}))
   const name = boundedStr(body.name, 200)
   if (!name) return bad('name-required')
+  const openingBalance = round2(signedMoney(body.openingBalance, 0))
+  if (openingBalance !== 0 && !isStaff(s)) return forbidden()
   const row = await db.supplier.create({
     data: {
       orgId: s.orgId,
@@ -35,7 +43,7 @@ export async function POST(req: NextRequest) {
       phone: optStr(body.phone),
       address: optStr(body.address),
       // Signed balance: may be negative (credit). Finite + rounded (see docs/MONEY-AUDIT.md)
-      openingBalance: round2(signedMoney(body.openingBalance, 0)),
+      openingBalance,
       notes: optStr(body.notes),
     },
   })

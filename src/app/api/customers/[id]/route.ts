@@ -1,5 +1,6 @@
 import { getSession, isStaff } from '@/lib/auth'
 import { ok, bad, str, optStr, signedMoney, round2, forbidden, unauthorized } from '@/lib/api-helpers'
+import { singlePartyDues } from '@/lib/reports-utils'
 import { NextRequest } from 'next/server'
 import { db } from '@/lib/db'
 
@@ -9,31 +10,37 @@ async function getCustomer(orgId: string, id: string) {
   return db.customer.findFirst({ where: { id, orgId } })
 }
 
-/** GET /api/customers/[id] — profile + recent invoices + balance statement */
+/**
+ * GET /api/customers/[id] — profile + recent invoices + balance statement.
+ *
+ * BALANCE INTEGRITY: `owed` is computed by singlePartyDues() over the FULL set
+ * of the customer's documents (same formula as partyDues() used by Dashboard/
+ * Reports/Ledger — identical by construction). The `take: 50` list below is
+ * presentation-only history and NEVER feeds the balance math.
+ */
 export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   const s = await getSession(req)
   if (!s) return unauthorized()
   const { id } = await ctx.params
   const customer = await getCustomer(s.orgId, id)
   if (!customer) return bad('not-found', 404)
-  const [invoices, receipts] = await Promise.all([
+  const [invoices, balance] = await Promise.all([
     db.invoice.findMany({
       where: { orgId: s.orgId, customerId: id, type: 'SALE' },
       orderBy: { date: 'desc' },
       take: 50,
       select: { id: true, number: true, date: true, total: true, paidAmount: true, status: true },
     }),
-    db.voucher.aggregate({
-      where: { orgId: s.orgId, customerId: id, invoiceId: null },
-      _sum: { amount: true },
-    }),
+    singlePartyDues(s.orgId, 'customer', id),
   ])
-  const dues = invoices.reduce((sum, i) => sum + Math.max(0, i.total - i.paidAmount), 0)
   return ok({
     ...customer,
-    owed: customer.openingBalance + dues - (receipts._sum.amount ?? 0),
+    owed: balance.owed,
+    invoiceDues: balance.invoiceDues,
+    // Standalone receipts + receipts on cancelled invoices (party credit) —
+    // matches partyDues() credit semantics.
+    standaloneReceipts: balance.voucherCredit,
     invoices,
-    standaloneReceipts: receipts._sum.amount ?? 0,
   })
 }
 

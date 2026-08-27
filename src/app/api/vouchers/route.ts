@@ -11,6 +11,7 @@ import {
   money,
   withIdempotency,
   okIdempotent,
+  isUniqueViolation,
 } from '@/lib/api-helpers'
 import { NextRequest } from 'next/server'
 import { db } from '@/lib/db'
@@ -113,7 +114,7 @@ export async function POST(req: NextRequest) {
     if (inv.type !== expectLinked) return bad('invoice-type-mismatch')
   }
 
-  const result = await withIdempotency(req, s, 'voucher', async () => {
+  const result = await withIdempotency(req, s, 'voucher', async (clientOpId) => {
     const created = await db.$transaction(async (tx) => {
       const c = await tx.counter.upsert({
         where: { orgId_docKey: { orgId: s.orgId, docKey: type === 'RECEIPT' ? 'RCV' : 'PMT' } },
@@ -140,23 +141,39 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      const voucher = await tx.voucher.create({
-        data: {
-          orgId: s.orgId,
-          number,
-          type,
-          method,
-          amount,
-          partyType,
-          partyName: partyName ?? (type === 'RECEIPT' ? 'سند قبض نقدي' : 'سند صرف'),
-          customerId: type === 'RECEIPT' ? customerId : null,
-          supplierId: type === 'PAYMENT' ? supplierId : null,
-          invoiceId,
-          note: optStr(body.note),
-          userId: s.id,
-          date: typeof body.date === 'string' && !isNaN(new Date(body.date).getTime()) ? new Date(body.date) : new Date(),
-        },
-      })
+      // CRASH-WINDOW DEDUPE: the scoped idempotency key is embedded in the
+      // document inside the same transaction (@@unique per org). A retry after
+      // a post-COMMIT crash resolves to the committed voucher — and skips the
+      // paidAmount application below (already applied by the original attempt).
+      let voucher: Awaited<ReturnType<typeof tx.voucher.create>>
+      try {
+        voucher = await tx.voucher.create({
+          data: {
+            orgId: s.orgId,
+            number,
+            type,
+            method,
+            amount,
+            clientOperationId: clientOpId,
+            partyType,
+            partyName: partyName ?? (type === 'RECEIPT' ? 'سند قبض نقدي' : 'سند صرف'),
+            customerId: type === 'RECEIPT' ? customerId : null,
+            supplierId: type === 'PAYMENT' ? supplierId : null,
+            invoiceId,
+            note: optStr(body.note),
+            userId: s.id,
+            date: typeof body.date === 'string' && !isNaN(new Date(body.date).getTime()) ? new Date(body.date) : new Date(),
+          },
+        })
+      } catch (e) {
+        if (clientOpId && isUniqueViolation(e, 'clientOperationId')) {
+          const dup = await tx.voucher.findFirst({
+            where: { orgId: s.orgId, clientOperationId: clientOpId },
+          })
+          if (dup) return dup
+        }
+        throw e
+      }
 
       if (invoiceId) {
         // Compare-and-swap: re-read paidAmount inside the write transaction and only

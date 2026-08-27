@@ -1,11 +1,11 @@
-import { getSession } from '@/lib/auth'
+import { getSession, isStaff } from '@/lib/auth'
 import { NextRequest } from 'next/server'
 import { db } from '@/lib/db'
 
 import { unauthorized, boundedStr } from '@/lib/api-helpers'
-import { ok, bad, str } from '@/lib/api-helpers'
+import { ok, bad, str, forbidden } from '@/lib/api-helpers'
 
-/** GET /api/categories — list tenant categories */
+/** GET /api/categories — list tenant categories (read: all roles) */
 export async function GET(req: NextRequest) {
   const s = await getSession(req)
   if (!s) return unauthorized()
@@ -16,10 +16,17 @@ export async function GET(req: NextRequest) {
   return ok(rows)
 }
 
-/** POST /api/categories { name, sort? } */
+/**
+ * POST /api/categories { name, sort? }
+ *
+ * AUTHORIZATION (documented policy): category management shapes the whole
+ * catalog — writes are ADMIN/MANAGER only (CASHIER → 403), matching
+ * PUT/DELETE on /api/categories/[id]. Read stays open to all staff+cashier.
+ */
 export async function POST(req: NextRequest) {
   const s = await getSession(req)
   if (!s) return unauthorized()
+  if (!isStaff(s)) return forbidden()
   const body = await req.json().catch(() => ({}))
   const name = boundedStr(body.name, 200)
   if (!name) return bad('name-required')

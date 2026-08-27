@@ -93,6 +93,11 @@ const json = async (res: Response) => {
 }
 
 beforeAll(async () => {
+  // disposable test database — rebuilt from scratch so the schema always matches
+  const fs = await import('node:fs')
+  for (const suffix of ['', '-journal', '-wal', '-shm']) {
+    try { fs.unlinkSync(TEST_DB + suffix) } catch { /* not present */ }
+  }
   execSync(`bunx prisma db push --skip-generate`, {
     cwd: process.cwd(),
     env: { ...process.env, DATABASE_URL: `file:${TEST_DB}` },

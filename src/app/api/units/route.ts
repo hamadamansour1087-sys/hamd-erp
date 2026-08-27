@@ -1,11 +1,11 @@
-import { getSession } from '@/lib/auth'
+import { getSession, isStaff } from '@/lib/auth'
 import { NextRequest } from 'next/server'
 import { db } from '@/lib/db'
 
 import { unauthorized, boundedStr } from '@/lib/api-helpers'
-import { ok, bad, str, optStr } from '@/lib/api-helpers'
+import { ok, bad, str, optStr, forbidden } from '@/lib/api-helpers'
 
-/** GET /api/units */
+/** GET /api/units (read: all roles) */
 export async function GET(req: NextRequest) {
   const s = await getSession(req)
   if (!s) return unauthorized()
@@ -13,10 +13,17 @@ export async function GET(req: NextRequest) {
   return ok(rows)
 }
 
-/** POST /api/units { name, shortName? } */
+/**
+ * POST /api/units { name, shortName? }
+ *
+ * AUTHORIZATION (documented policy): unit management shapes the whole
+ * catalog — writes are ADMIN/MANAGER only (CASHIER → 403), matching
+ * PUT/DELETE on /api/units/[id]. Read stays open to all roles.
+ */
 export async function POST(req: NextRequest) {
   const s = await getSession(req)
   if (!s) return unauthorized()
+  if (!isStaff(s)) return forbidden()
   const body = await req.json().catch(() => ({}))
   const name = boundedStr(body.name, 200)
   if (!name) return bad('name-required')

@@ -1,5 +1,6 @@
 import { getSession, isStaff } from '@/lib/auth'
 import { ok, bad, str, optStr, signedMoney, round2, forbidden, unauthorized } from '@/lib/api-helpers'
+import { singlePartyDues } from '@/lib/reports-utils'
 import { NextRequest } from 'next/server'
 import { db } from '@/lib/db'
 
@@ -9,31 +10,35 @@ async function getSupplier(orgId: string, id: string) {
   return db.supplier.findFirst({ where: { id, orgId } })
 }
 
-/** GET /api/suppliers/[id] — profile + recent purchases + owed */
+/**
+ * GET /api/suppliers/[id] — profile + recent purchases + owed.
+ *
+ * BALANCE INTEGRITY: `owed` comes from singlePartyDues() over the FULL set of
+ * documents (same formula as partyDues() used by Dashboard/Reports/Ledger —
+ * identical by construction). `take: 50` is presentation-only history.
+ */
 export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   const s = await getSession(req)
   if (!s) return unauthorized()
   const { id } = await ctx.params
   const supplier = await getSupplier(s.orgId, id)
   if (!supplier) return bad('not-found', 404)
-  const [invoices, payments] = await Promise.all([
+  const [invoices, balance] = await Promise.all([
     db.invoice.findMany({
       where: { orgId: s.orgId, supplierId: id, type: 'PURCHASE' },
       orderBy: { date: 'desc' },
       take: 50,
       select: { id: true, number: true, date: true, total: true, paidAmount: true, status: true },
     }),
-    db.voucher.aggregate({
-      where: { orgId: s.orgId, supplierId: id, invoiceId: null },
-      _sum: { amount: true },
-    }),
+    singlePartyDues(s.orgId, 'supplier', id),
   ])
-  const dues = invoices.reduce((sum, i) => sum + Math.max(0, i.total - i.paidAmount), 0)
   return ok({
     ...supplier,
-    owed: supplier.openingBalance + dues - (payments._sum.amount ?? 0),
+    owed: balance.owed,
+    invoiceDues: balance.invoiceDues,
+    // Standalone payments + payments on cancelled invoices (party credit).
+    standalonePayments: balance.voucherCredit,
     invoices,
-    standalonePayments: payments._sum.amount ?? 0,
   })
 }
 

@@ -10,6 +10,7 @@ import {
   forbidden,
   withIdempotency,
   okIdempotent,
+  isUniqueViolation,
 } from '@/lib/api-helpers'
 import { NextRequest } from 'next/server'
 import { db } from '@/lib/db'
@@ -100,7 +101,7 @@ export async function POST(req: NextRequest) {
   }
   if (items.length === 0) return bad('items-invalid')
 
-  const result = await withIdempotency(req, s, 'transfer', async () => {
+  const result = await withIdempotency(req, s, 'transfer', async (clientOpId) => {
     const created = await db.$transaction(async (tx) => {
     const c = await tx.counter.upsert({
       where: { orgId_docKey: { orgId: s.orgId, docKey: 'TRF' } },
@@ -109,20 +110,36 @@ export async function POST(req: NextRequest) {
     })
     const number = c.next - 1 || 1
 
-    const transfer = await tx.transfer.create({
-      data: {
-        orgId: s.orgId,
-        number,
-        fromWarehouseId: fromId,
-        toWarehouseId: toId,
-        note: optStr(body.note),
-        userId: s.id,
-        items: {
-          create: items.map((i) => ({ productId: i.productId, productName: pmap.get(i.productId)!, qty: i.qty })),
+    // CRASH-WINDOW DEDUPE: scoped key embedded in the document (@@unique per
+    // org). A retry after a post-COMMIT crash resolves to the committed
+    // transfer — stock effects below were already applied by the original.
+    let transfer: Awaited<ReturnType<typeof tx.transfer.create>>
+    try {
+      transfer = await tx.transfer.create({
+        data: {
+          orgId: s.orgId,
+          number,
+          clientOperationId: clientOpId,
+          fromWarehouseId: fromId,
+          toWarehouseId: toId,
+          note: optStr(body.note),
+          userId: s.id,
+          items: {
+            create: items.map((i) => ({ productId: i.productId, productName: pmap.get(i.productId)!, qty: i.qty })),
+          },
         },
-      },
-      include: { items: true },
-    })
+        include: { items: true },
+      })
+    } catch (e) {
+      if (clientOpId && isUniqueViolation(e, 'clientOperationId')) {
+        const dup = await tx.transfer.findFirst({
+          where: { orgId: s.orgId, clientOperationId: clientOpId },
+          include: { items: true },
+        })
+        if (dup) return dup
+      }
+      throw e
+    }
 
     for (const it of items) {
       // decrement source

@@ -161,6 +161,15 @@ export function clientIp(req: NextRequest): string {
 // The client sends a stable `Idempotency-Key` header per logical operation; the
 // first successful execution records its resultId, and replays receive the same
 // document instead of creating a second one.
+//
+// CRASH-WINDOW SAFETY (two layers):
+//   Layer 1 — the IdempotencyKey CLAIM row (fast path, pre-transaction).
+//   Layer 2 — the FINANCIAL DOCUMENT itself: handlers embed the scoped key as
+//   `clientOperationId` (unique per org) inside the same transaction that writes
+//   the document. If the server crashes between the financial COMMIT and the
+//   resultId bookkeeping, the retry re-runs the handler; the document-level
+//   @@unique violation resolves to the already-committed document — a duplicate
+//   financial document is impossible in every interleaving.
 
 export interface IdempotentResult<T> {
   reused: boolean
@@ -174,36 +183,51 @@ function extractId(value: unknown): string | null {
 }
 
 /**
- * Run `run()` once per (org, key). Returns `{ reused: true, value }` carrying the
- * original resultId when the same key is replayed. If `run()` throws, the claim is
- * released so the operation can be retried.
+ * Detect a Prisma unique-constraint violation (optionally on a specific field).
+ * Works for errors thrown inside or outside $transaction callbacks.
+ */
+export function isUniqueViolation(e: unknown, field?: string): boolean {
+  const err = e as { code?: unknown; meta?: { target?: unknown } }
+  if (err?.code !== 'P2002') return false
+  if (!field) return true
+  const target = err.meta?.target
+  if (Array.isArray(target)) return target.some((t) => String(t).includes(field))
+  return String(target ?? '').includes(field)
+}
+
+/**
+ * Run `run()` once per (org, key). `run` receives the scoped clientOperationId
+ * (or null when no valid key was provided) and MUST, for financial operations,
+ * write it into the document's `clientOperationId` column inside the creation
+ * transaction — see the crash-window notes above.
  *
- * Handlers should return an object containing an `id` (the created document); for
- * id-less operations (e.g. stock adjust) embed a synthetic id so replays resolve.
+ * Returns `{ reused: true, value }` when the key was claimed before (replay or
+ * crash recovery). If the first attempt throws, the claim is released so the
+ * operation can be retried with the same key.
  */
 export async function withIdempotency<T>(
   req: NextRequest,
   session: SessionUser,
   scope: string,
-  run: () => Promise<T>
+  run: (clientOperationId: string | null) => Promise<T>
 ): Promise<IdempotentResult<T> | Response> {
   const rawKey = req.headers.get('idempotency-key')?.trim()
   if (!rawKey || rawKey.length < 6 || rawKey.length > 100) {
     // No/invalid key → legacy non-idempotent behavior (kept for compatibility)
-    const value = await run()
+    const value = await run(null)
     return { reused: false, value }
   }
-  const key = `${scope}:${rawKey.replace(/[^\w.:-]/g, '')}`
+  const clientOpId = `${scope}:${rawKey.replace(/[^\w.:-]/g, '')}`
 
   let claim
   try {
     claim = await db.idempotencyKey.create({
-      data: { orgId: session.orgId, userId: session.id, key },
+      data: { orgId: session.orgId, userId: session.id, key: clientOpId },
     })
   } catch {
-    // Unique (orgId, key) violated → this operation was already processed.
+    // Unique (orgId, key) violated → this operation was claimed before.
     const existing = await db.idempotencyKey.findUnique({
-      where: { orgId_key: { orgId: session.orgId, key } },
+      where: { orgId_key: { orgId: session.orgId, key: clientOpId } },
       select: { resultId: true, userId: true },
     })
     // SECURITY: a replayed key is only honoured by its ORIGINAL OWNER. Another
@@ -214,20 +238,25 @@ export async function withIdempotency<T>(
     if (existing?.resultId) {
       return { reused: true, value: { id: existing.resultId } as T }
     }
-    // Claim exists without a result → original attempt still in flight or crashed;
-    // release stale claim (older than 2 min) or ask client to retry.
-    const stale = await db.idempotencyKey.findUnique({
-      where: { orgId_key: { orgId: session.orgId, key } },
-      select: { createdAt: true },
-    })
-    if (stale && Date.now() - stale.createdAt.getTime() > 120_000) {
-      await db.idempotencyKey.deleteMany({ where: { orgId: session.orgId, key, resultId: null } })
+    // Claim exists WITHOUT a result → the original attempt is either still in
+    // flight or it crashed after the financial COMMIT but before the resultId
+    // was recorded. Re-run the handler: the document-level @@unique on
+    // clientOperationId resolves the ambiguity — an already-committed document
+    // is returned as-is; a never-committed one is created exactly once.
+    const value = await run(clientOpId)
+    const resultId = extractId(value)
+    if (resultId) {
+      // Backfill the claim so future replays short-circuit (may already be gone).
+      await db.idempotencyKey.updateMany({
+        where: { orgId: session.orgId, key: clientOpId, resultId: null },
+        data: { resultId },
+      })
     }
-    return bad('duplicate-in-progress', 409)
+    return { reused: true, value }
   }
 
   try {
-    const value = await run()
+    const value = await run(clientOpId)
     const resultId = extractId(value)
     if (resultId) {
       await db.idempotencyKey.update({ where: { id: claim.id }, data: { resultId } })

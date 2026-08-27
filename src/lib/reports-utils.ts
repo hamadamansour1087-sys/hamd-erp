@@ -140,6 +140,59 @@ export async function partyDues(orgId: string) {
   }
 }
 
+/**
+ * Balance for ONE party (customer/supplier) — mirrors partyDues() exactly:
+ *  - dues: per-invoice max(0, total - paidAmount) over NON-CANCELLED invoices
+ *    (per-invoice clamp, never sum-then-clamp, so an edge-case overpaid invoice
+ *    cannot distort other invoices' dues)
+ *  - vouchers on CANCELLED invoices count as party CREDIT, exactly like
+ *    standalone vouchers (see DELETE /api/invoices/[id] business rule #3)
+ *  - full-set computation over ALL documents — never last-N.
+ *
+ * Used by /api/customers/[id] and /api/suppliers/[id] so the Customer/Supplier
+ * profile, Dashboard, Reports and Ledger all share one formula by construction.
+ */
+export async function singlePartyDues(
+  orgId: string,
+  kind: 'customer' | 'supplier',
+  partyId: string
+): Promise<{ openingBalance: number; invoiceDues: number; voucherCredit: number; owed: number }> {
+  const party =
+    kind === 'customer'
+      ? await db.customer.findFirst({ where: { id: partyId, orgId }, select: { openingBalance: true } })
+      : await db.supplier.findFirst({ where: { id: partyId, orgId }, select: { openingBalance: true } })
+  if (!party) return { openingBalance: 0, invoiceDues: 0, voucherCredit: 0, owed: 0 }
+
+  const invoices = await db.invoice.findMany({
+    where: {
+      orgId,
+      type: kind === 'customer' ? 'SALE' : 'PURCHASE',
+      status: { not: 'CANCELLED' },
+      ...(kind === 'customer' ? { customerId: partyId } : { supplierId: partyId }),
+    },
+    select: { total: true, paidAmount: true },
+  })
+  const invoiceDues = round2(invoices.reduce((sum, i) => sum + Math.max(0, i.total - i.paidAmount), 0))
+
+  const credit = await db.voucher.aggregate({
+    where: {
+      orgId,
+      type: kind === 'customer' ? 'RECEIPT' : 'PAYMENT',
+      ...(kind === 'customer' ? { customerId: partyId } : { supplierId: partyId }),
+      OR: [{ invoiceId: null }, { invoice: { status: 'CANCELLED' } }],
+    },
+    _sum: { amount: true },
+  })
+  const voucherCredit = round2(credit._sum.amount ?? 0)
+
+  return {
+    openingBalance: party.openingBalance,
+    invoiceDues,
+    voucherCredit,
+    owed: round2(party.openingBalance + invoiceDues - voucherCredit),
+  }
+}
+
 /** Low stock products across all warehouses */
 export async function lowStockProducts(orgId: string) {
   const products = await db.product.findMany({

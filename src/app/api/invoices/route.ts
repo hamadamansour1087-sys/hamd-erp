@@ -11,6 +11,7 @@ import {
   money,
   withIdempotency,
   okIdempotent,
+  isUniqueViolation,
 } from '@/lib/api-helpers'
 import { NextRequest } from 'next/server'
 import { db } from '@/lib/db'
@@ -221,44 +222,69 @@ export async function POST(req: NextRequest) {
   if (dueDateRaw && isNaN(new Date(dueDateRaw).getTime())) return bad('invalid-due-date')
   const dueDate = dueDateRaw
 
-  const result = await withIdempotency(req, s, 'invoice', async () => {
+  const result = await withIdempotency(req, s, 'invoice', async (clientOpId) => {
     const created = await db.$transaction(async (tx) => {
     const number = await nextDocNumber(tx, s.orgId, type === 'SALE' ? 'INV' : 'PUR')
-    const invoice = await tx.invoice.create({
-      data: {
-        orgId: s.orgId,
-        number,
-        type,
-        status,
-        customerId: type === 'SALE' ? customerId : null,
-        supplierId: type === 'PURCHASE' ? supplierId : null,
-        warehouseId: warehouse!.id,
-        userId: s.id,
-        date: invoiceDate,
-        dueDate: dueDate ? new Date(dueDate) : null,
-        subtotal,
-        discount,
-        taxPercent: taxPercentFinal,
-        taxAmount,
-        total,
-        paidAmount,
-        costTotal,
-        notes,
-        items: {
-          create: normItems.map((it) => ({
-            productId: it.productId,
-            nameSnap: it.nameSnap,
-            unitSnap: it.unitSnap,
-            barcodeSnap: it.barcodeSnap,
-            qty: it.qty,
-            price: it.price,
-            costAtSale: it.costAtSale,
-            total: round2(it.qty * it.price),
-          })),
+    // CRASH-WINDOW DEDUPE: the scoped idempotency key is embedded in the
+    // document inside the same transaction. If a previous attempt already
+    // committed (crash after COMMIT, lost claim), the @@unique([orgId,
+    // clientOperationId]) violation resolves to that invoice — no second one.
+    let invoice: Awaited<ReturnType<typeof tx.invoice.create>>
+    try {
+      invoice = await tx.invoice.create({
+        data: {
+          orgId: s.orgId,
+          number,
+          type,
+          status,
+          clientOperationId: clientOpId,
+          customerId: type === 'SALE' ? customerId : null,
+          supplierId: type === 'PURCHASE' ? supplierId : null,
+          warehouseId: warehouse!.id,
+          userId: s.id,
+          date: invoiceDate,
+          dueDate: dueDate ? new Date(dueDate) : null,
+          subtotal,
+          discount,
+          taxPercent: taxPercentFinal,
+          taxAmount,
+          total,
+          paidAmount,
+          costTotal,
+          notes,
+          items: {
+            create: normItems.map((it) => ({
+              productId: it.productId,
+              nameSnap: it.nameSnap,
+              unitSnap: it.unitSnap,
+              barcodeSnap: it.barcodeSnap,
+              qty: it.qty,
+              price: it.price,
+              costAtSale: it.costAtSale,
+              total: round2(it.qty * it.price),
+            })),
+          },
         },
-      },
-      include: { items: true },
-    })
+        include: { items: true },
+      })
+    } catch (e) {
+      if (clientOpId && isUniqueViolation(e, 'clientOperationId')) {
+        const dup = await tx.invoice.findFirst({
+          where: { orgId: s.orgId, clientOperationId: clientOpId },
+          include: { items: true },
+        })
+        if (dup) {
+          const dupVoucher = await tx.voucher.findFirst({
+            where: { orgId: s.orgId, invoiceId: dup.id },
+            select: { number: true },
+          })
+          // Everything below (stock, cost, voucher) was already applied by the
+          // original attempt — return the committed document untouched.
+          return { invoice: dup, voucherNumber: dupVoucher?.number ?? null }
+        }
+      }
+      throw e
+    }
 
     // stock effects
     for (const it of normItems) {

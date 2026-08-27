@@ -14,6 +14,7 @@ import {
   round2,
   withIdempotency,
   okIdempotent,
+  isUniqueViolation,
 } from '@/lib/api-helpers'
 
 /** GET /api/expenses?from=&to=&q=&page= */
@@ -71,22 +72,33 @@ export async function POST(req: NextRequest) {
   if (!(amount > 0)) return bad('amount-required')
   const method = ['CASH', 'BANK', 'CARD', 'WALLET'].includes(str(body.method)) ? str(body.method) : 'CASH'
 
-  const result = await withIdempotency(req, s, 'expense', async () => {
-    const row = await db.expense.create({
-      data: {
-        orgId: s.orgId,
-        category: optStr(body.category)?.slice(0, 120) ?? 'عام',
-        amount,
-        method,
-        note: optStr(body.note)?.slice(0, 500),
-        userId: s.id,
-        date:
-          typeof body.date === 'string' && !isNaN(new Date(body.date).getTime())
-            ? new Date(body.date)
-            : new Date(),
-      },
-    })
-    return row
+  const result = await withIdempotency(req, s, 'expense', async (clientOpId) => {
+    // CRASH-WINDOW DEDUPE: scoped key embedded in the document (@@unique per
+    // org). A retry after a post-COMMIT crash resolves to the committed row.
+    try {
+      const row = await db.expense.create({
+        data: {
+          orgId: s.orgId,
+          category: optStr(body.category)?.slice(0, 120) ?? 'عام',
+          amount,
+          method,
+          note: optStr(body.note)?.slice(0, 500),
+          userId: s.id,
+          clientOperationId: clientOpId,
+          date:
+            typeof body.date === 'string' && !isNaN(new Date(body.date).getTime())
+              ? new Date(body.date)
+              : new Date(),
+        },
+      })
+      return row
+    } catch (e) {
+      if (clientOpId && isUniqueViolation(e, 'clientOperationId')) {
+        const dup = await db.expense.findFirst({ where: { orgId: s.orgId, clientOperationId: clientOpId } })
+        if (dup) return dup
+      }
+      throw e
+    }
   })
   return okIdempotent(result)
 }
