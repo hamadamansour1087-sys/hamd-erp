@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>H.A.M.D</title>
+    <style>
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      html, body { height: 100%; }
+      body {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 16px;
+        background: #f7fdfa;
+        color: #0f172a;
+        font-family: 'Cairo', 'Segoe UI', Tahoma, sans-serif;
+        text-align: center;
+        padding: 24px;
+      }
+      .logo {
+        width: 72px;
+        height: 72px;
+        border-radius: 20px;
+        background: linear-gradient(135deg, #0d9488, #047857);
+        color: #fff;
+        font-size: 36px;
+        font-weight: 800;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        box-shadow: 0 10px 30px rgba(13, 148, 136, 0.35);
+      }
+      h1 { font-size: 18px; font-weight: 800; }
+      p { font-size: 14px; color: #64748b; max-width: 320px; line-height: 1.7; }
+      .spinner {
+        width: 22px;
+        height: 22px;
+        border-radius: 50%;
+        border: 3px solid rgba(13, 148, 136, 0.2);
+        border-top-color: #0d9488;
+        animation: spin 0.8s linear infinite;
+      }
+      @keyframes spin { to { transform: rotate(360deg); } }
+    </style>
+  </head>
+  <body>
+    <div class="logo">H</div>
+    <h1>H.A.M.D — إدارة المخازن والمحلات</h1>
+    <p>إذا ظهرت هذه الشاشة فقد لم يُضبط رابط السيرفر بعد. افتح <b>capacitor.config.ts</b> وضع رابط تطبيقك المنشور في <b>server.url</b> ثم أعد بناء التطبيق.</p>
+    <div class="spinner" aria-hidden="true"></div>
+  </body>
+</html>
