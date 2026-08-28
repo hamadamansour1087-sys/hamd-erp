@@ -13,7 +13,6 @@ export const settingsDict: LangDict = {
     'set.tab.appearance': 'Appearance',
     'set.tab.users': 'Users',
     'set.tab.data': 'Data & backup',
-    'set.tab.designer': 'Invoice designer',
     'set.tab.about': 'About',
 
     // ---------- Shared lock / role notes ----------
@@ -116,7 +115,6 @@ export const settingsDict: LangDict = {
     'set.tab.appearance': 'المظهر',
     'set.tab.users': 'المستخدمون',
     'set.tab.data': 'البيانات والنسخ الاحتياطي',
-    'set.tab.designer': 'مصمم الفواتير',
     'set.tab.about': 'حول التطبيق',
 
     // ---------- ملاحظات الصلاحيات ----------

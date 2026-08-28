@@ -6,7 +6,6 @@ import { rootDict } from './root-dict'
 import { authDict } from './modules/auth'
 import { catalogDict } from './modules/catalog'
 import { dashboardDict } from './modules/dashboard'
-import { designerDict } from './modules/designer'
 import { financeDict } from './modules/finance'
 import { peopleDict } from './modules/people'
 import { posDict } from './modules/pos'
@@ -23,7 +22,6 @@ const ALL: { en: Record<string, string>; ar: Record<string, string> }[] = [
   authDict,
   catalogDict,
   dashboardDict,
-  designerDict,
   financeDict,
   peopleDict,
   posDict,

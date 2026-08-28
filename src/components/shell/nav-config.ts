@@ -6,7 +6,6 @@ import {
   LayoutDashboard,
   MonitorSmartphone,
   Package,
-  Palette,
   Settings,
   ShoppingCart,
   Truck,
@@ -57,7 +56,6 @@ export const NAV_SECTIONS: NavSection[] = [
   {
     labelKey: 'nav.section.system',
     items: [
-      { key: 'designer', labelKey: 'nav.designer', icon: Palette },
       { key: 'settings', labelKey: 'nav.settings', icon: Settings },
     ],
   },
@@ -74,7 +72,6 @@ export const VIEW_TITLE_KEYS: Record<ViewKey, string> = {
   suppliers: 'nav.suppliers',
   finance: 'nav.finance',
   reports: 'nav.reports',
-  designer: 'nav.designer',
   settings: 'nav.settings',
 }
 

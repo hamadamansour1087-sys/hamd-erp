@@ -13,7 +13,6 @@ export type ViewKey =
   | 'suppliers'
   | 'finance'
   | 'reports'
-  | 'designer'
   | 'settings'
 
 const CASHIER_ALLOWED: ViewKey[] = ['pos', 'sales', 'catalog', 'customers', 'dashboard']

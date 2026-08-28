@@ -5,7 +5,9 @@
  * NO react / DOM imports — every function here is a pure string-in/string-out
  * builder so it is trivially testable and shared by:
  *   - `src/lib/print/client.ts` (real printing via hidden iframe)
- *   - `src/views/designer/DesignerView.tsx` (live preview iframe)
+ *   - print preview surfaces across the app
+ *   (the former designer view was removed; these builders remain the single
+ *    source of printed markup)
  *
  * Printed output is always LTR-numbers ("printer-safe"): money uses latin
  * digits + currency code suffix, dates are formatted en-GB style.

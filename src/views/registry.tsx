@@ -20,7 +20,6 @@ const LOADERS: Record<ViewKey, () => Promise<{ default: React.ComponentType }>> 
   suppliers: () => import('@/views/people/SuppliersView'),
   finance: () => import('@/views/finance/FinanceView'),
   reports: () => import('@/views/reports/ReportsView'),
-  designer: () => import('@/views/designer/DesignerView'),
   settings: () => import('@/views/settings/SettingsView'),
 }
 

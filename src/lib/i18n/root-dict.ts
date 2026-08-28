@@ -14,7 +14,7 @@ export const rootDict: LangDict = {
     'app.tagline': 'Warehouse & Store Management System',
 
     // ---------- Navigation ----------
-    'nav.dashboard': 'Dashboard',
+    'nav.dashboard': 'H.A.M.D — Integrated POS, Inventory & Invoicing',
     'nav.pos': 'Point of Sale',
     'nav.catalog': 'Products',
     'nav.sales': 'Sales Invoices',
@@ -24,7 +24,6 @@ export const rootDict: LangDict = {
     'nav.suppliers': 'Suppliers',
     'nav.finance': 'Vouchers & Expenses',
     'nav.reports': 'Reports',
-    'nav.designer': 'Invoice Designer',
     'nav.settings': 'Settings',
     'nav.section.operations': 'Operations',
     'nav.section.directory': 'Directory',
@@ -176,7 +175,7 @@ export const rootDict: LangDict = {
     'app.tagline': 'نظام إدارة المخازن والمحلات المتكامل',
 
     // ---------- التنقل ----------
-    'nav.dashboard': 'لوحة التحكم',
+    'nav.dashboard': 'H.A.M.D نظام متكامل لنقاط البيع والمخازن والفواتير',
     'nav.pos': 'نقطة البيع',
     'nav.catalog': 'المنتجات',
     'nav.sales': 'فواتير المبيعات',
@@ -186,7 +185,6 @@ export const rootDict: LangDict = {
     'nav.suppliers': 'الموردون',
     'nav.finance': 'السندات والمصروفات',
     'nav.reports': 'التقارير',
-    'nav.designer': 'مصمم الفواتير',
     'nav.settings': 'الإعدادات',
     'nav.section.operations': 'التشغيل اليومي',
     'nav.section.directory': 'الدليل',

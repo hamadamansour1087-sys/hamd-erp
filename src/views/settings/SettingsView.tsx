@@ -15,7 +15,6 @@ import {
   DatabaseBackup,
   Download,
   Eraser,
-  FileText,
   ImageOff,
   Info,
   LifeBuoy,
@@ -1065,10 +1064,7 @@ function AboutTab() {
 
 // ═══════════════════════════════ Shell ═══════════════════════════════
 
-/** Designer is heavy (iframe preview + print engine) — code-split it away from the settings chunk. */
-const DesignerView = React.lazy(() => import('@/views/designer/DesignerView'))
-
-type TabKey = 'org' | 'appearance' | 'users' | 'data' | 'designer' | 'about'
+type TabKey = 'org' | 'appearance' | 'users' | 'data' | 'about'
 
 export default function SettingsView() {
   const { t } = useI18n()
@@ -1081,9 +1077,6 @@ export default function SettingsView() {
     { key: 'appearance', label: t('set.tab.appearance'), icon: Palette },
     ...(role !== 'CASHIER' ? [{ key: 'users' as const, label: t('set.tab.users'), icon: UsersRound }] : []),
     ...(role === 'ADMIN' ? [{ key: 'data' as const, label: t('set.tab.data'), icon: DatabaseBackup }] : []),
-    ...(role !== 'CASHIER'
-      ? [{ key: 'designer' as const, label: t('set.tab.designer'), icon: FileText }]
-      : []),
     { key: 'about', label: t('set.tab.about'), icon: SettingsIcon },
   ]
 
@@ -1144,21 +1137,6 @@ export default function SettingsView() {
         {role === 'ADMIN' ? (
           <TabsContent value="data" className="mt-4">
             <DataTab />
-          </TabsContent>
-        ) : null}
-
-        {role !== 'CASHIER' ? (
-          <TabsContent value="designer" className="mt-4">
-            <React.Suspense
-              fallback={
-                <div className="flex items-center justify-center py-24" aria-busy>
-                  <span className="size-8 animate-spin rounded-full border-2 border-primary border-t-transparent" aria-hidden />
-                  <span className="sr-only">Loading…</span>
-                </div>
-              }
-            >
-              <DesignerView />
-            </React.Suspense>
           </TabsContent>
         ) : null}
 
