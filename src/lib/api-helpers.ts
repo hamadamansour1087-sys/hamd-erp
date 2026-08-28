@@ -3,6 +3,20 @@ import type { NextRequest } from 'next/server'
 import type { SessionUser } from '@/lib/types'
 import { isAdmin, isStaff } from '@/lib/auth'
 import { db } from '@/lib/db'
+import { createHash } from 'node:crypto'
+
+/**
+ * Thrown INSIDE a stock transaction when an atomic negative-stock guard
+ * (conditional `updateMany` with `qty: { gte }` in the WHERE) matched 0 rows.
+ * The route catches it OUTSIDE the transaction (whose partial writes were
+ * rolled back) and maps it to 409 — the client can retry once stock arrives.
+ */
+export class InsufficientStockError extends Error {
+  constructor(message = 'insufficient-stock') {
+    super(message)
+    this.name = 'InsufficientStockError'
+  }
+}
 
 export function ok<T>(data: T, init?: ResponseInit) {
   return NextResponse.json({ data }, init)
@@ -162,6 +176,14 @@ export function clientIp(req: NextRequest): string {
 // first successful execution records its resultId, and replays receive the same
 // document instead of creating a second one.
 //
+// KEY IDENTITY (canonicalization-safe):
+//   The RAW header value is never mutated and never used as identity directly.
+//   It is VALIDATED strictly (charset [A-Za-z0-9._:-], length 6–100) — any
+//   other character is a 400 before any DB touch — and the stored/stable
+//   identity is `scope:SHA-256(rawKey)`. Two different raw keys therefore can
+//   never alias to one operation (the old regex-cleaning made `abc@123` and
+//   `abc123` collide, and all-symbol keys collapsed to '').
+//
 // CRASH-WINDOW SAFETY (two layers):
 //   Layer 1 — the IdempotencyKey CLAIM row (fast path, pre-transaction).
 //   Layer 2 — the FINANCIAL DOCUMENT itself: handlers embed the scoped key as
@@ -170,6 +192,18 @@ export function clientIp(req: NextRequest): string {
 //   resultId bookkeeping, the retry re-runs the handler; the document-level
 //   @@unique violation resolves to the already-committed document — a duplicate
 //   financial document is impossible in every interleaving.
+
+/** Strict Idempotency-Key charset: letters, digits, dot, underscore, colon, dash. */
+export const IDEMPOTENCY_KEY_RE = /^[A-Za-z0-9._:-]{6,100}$/
+
+/**
+ * Stable operation identity for a raw client key: `scope:SHA-256(rawKey)`.
+ * Shared by withIdempotency() and the regression tests so both agree on the
+ * stored IdempotencyKey.key / document clientOperationId values.
+ */
+export function clientOperationIdFor(scope: string, rawKey: string): string {
+  return `${scope}:${createHash('sha256').update(rawKey).digest('hex')}`
+}
 
 export interface IdempotentResult<T> {
   reused: boolean
@@ -212,12 +246,16 @@ export async function withIdempotency<T>(
   run: (clientOperationId: string | null) => Promise<T>
 ): Promise<IdempotentResult<T> | Response> {
   const rawKey = req.headers.get('idempotency-key')?.trim()
-  if (!rawKey || rawKey.length < 6 || rawKey.length > 100) {
-    // No/invalid key → legacy non-idempotent behavior (kept for compatibility)
+  if (!rawKey) {
+    // No key → legacy non-idempotent behavior (kept for compatibility)
     const value = await run(null)
     return { reused: false, value }
   }
-  const clientOpId = `${scope}:${rawKey.replace(/[^\w.:-]/g, '')}`
+  // An INVALID key must never execute the operation (and never silently
+  // degrade to non-idempotent): reject with 400 before any DB touch.
+  if (!IDEMPOTENCY_KEY_RE.test(rawKey)) return bad('invalid-idempotency-key', 400)
+  // Identity = hash of the raw key — different raw keys can never collide.
+  const clientOpId = clientOperationIdFor(scope, rawKey)
 
   let claim
   try {

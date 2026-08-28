@@ -18,6 +18,14 @@ model Org {
   address         String?
   logo            String? // data:image URL ONLY (policy enforced in settings/org API; remote http URLs rejected)
   invoiceTemplate String? // JSON blob for invoice/receipt designer
+  // Server-side negative-stock policy (settings/org API). true (default) =
+  // documented POS behavior: sales may drive tracked stock below zero with a
+  // warning surfaced in the response. false = sales and purchase
+  // cancellations are atomically rejected (409) when stock < requested — the
+  // guard is a conditional UPDATE, so no read-then-write race exists.
+  // Stock TRANSFERS always enforce stock >= requested regardless of this
+  // flag (a transfer cannot move goods a warehouse does not have).
+  allowNegativeStock Boolean @default(true)
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 

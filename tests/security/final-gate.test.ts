@@ -19,6 +19,14 @@
  *    anchored on StockMovement (@@unique([orgId, clientOperationId])) inside
  *    the same transaction as the StockLevel write; replays/crash-retries
  *    never create a second movement or a second level change
+ *  - IDEM-2: Idempotency-Key canonicalization — strict charset validation
+ *    (invalid key → 400 before any DB touch) + SHA-256 identity so different
+ *    raw keys never alias to one operation
+ *  - STOCK-2: negative-stock policy — transfers always enforce
+ *    stock >= requested atomically (conditional UPDATE, no read-then-write
+ *    race); sales / purchase-cancellations follow the server-side
+ *    org.allowNegativeStock setting (default true = documented allow-with-
+ *    warning behavior, false = atomic 409)
  *
  * Run: bun test tests/security
  */
@@ -46,7 +54,10 @@ const warehousesRoute = await import('@/app/api/warehouses/route')
 const categoriesRoute = await import('@/app/api/categories/route')
 const unitsRoute = await import('@/app/api/units/route')
 const adjustRoute = await import('@/app/api/stock/adjust/route')
+const transfersRoute = await import('@/app/api/transfers/route')
+const invoiceDetailRoute = await import('@/app/api/invoices/[id]/route')
 const reportsUtils = await import('@/lib/reports-utils')
+const { clientOperationIdFor } = await import('@/lib/api-helpers')
 
 const { NextRequest } = await import('next/server')
 
@@ -466,7 +477,7 @@ describe('P0-06 — concurrent stock adjustments (no lost update)', () => {
 describe('P0-07 — idempotency survives a post-COMMIT crash', () => {
   test('retry after simulated crash (committed doc, claim without resultId) → SAME doc, no duplicate', async () => {
     const key = 'crash-window-invoice-1'
-    const scoped = `invoice:${key}`
+    const scoped = clientOperationIdFor('invoice', key)
 
     // 1) first attempt: create the invoice normally (with a claim we will "damage")
     const r1 = await json(await invoicesRoute.POST(makeReq('/api/invoices', {
@@ -505,7 +516,7 @@ describe('P0-07 — idempotency survives a post-COMMIT crash', () => {
 
   test('retry after crash BEFORE commit (claim only) → creates exactly one document', async () => {
     const key = 'crash-window-voucher-1'
-    const scoped = `voucher:${key}`
+    const scoped = clientOperationIdFor('voucher', key)
     // claim recorded, then the process died before the transaction committed
     await db.idempotencyKey.create({ data: { orgId: orgG.id, userId: adminG.id, key: scoped } })
 
@@ -549,7 +560,7 @@ describe('P0-07 — idempotency survives a post-COMMIT crash', () => {
     expect(r1.status).toBe(200)
     // crash window simulation: resultId lost
     await db.idempotencyKey.updateMany({
-      where: { orgId: orgG.id, key: `voucher:${key}` },
+      where: { orgId: orgG.id, key: clientOperationIdFor('voucher', key) },
       data: { resultId: null },
     })
     const r2 = await json(await vouchersRoute.POST(makeReq('/api/vouchers', {
@@ -596,7 +607,7 @@ describe('STOCK-1 — crash-safe stock adjustment idempotency', () => {
   test('1. same user + same key → one adjustment, one movement', async () => {
     const prod = await db.product.create({ data: { orgId: orgG.id, name: 'Idem Prod 1', price: 10, cost: 5, trackStock: true } })
     const key = 'stock-idem-same-1'
-    const scoped = `stock-adjust:${key}`
+    const scoped = clientOperationIdFor('stock-adjust', key)
 
     const r1 = await json(await adjustRoute.POST(makeReq('/api/stock/adjust', {
       method: 'POST', session: adminSess(),
@@ -632,7 +643,7 @@ describe('STOCK-1 — crash-safe stock adjustment idempotency', () => {
   test('2. retry after simulated post-COMMIT crash → one adjustment, one movement, same final stock', async () => {
     const prod = await db.product.create({ data: { orgId: orgG.id, name: 'Idem Prod 2', price: 10, cost: 5, trackStock: true } })
     const key = 'stock-idem-crash-1'
-    const scoped = `stock-adjust:${key}`
+    const scoped = clientOperationIdFor('stock-adjust', key)
 
     const r1 = await json(await adjustRoute.POST(makeReq('/api/stock/adjust', {
       method: 'POST', session: adminSess(),
@@ -669,7 +680,7 @@ describe('STOCK-1 — crash-safe stock adjustment idempotency', () => {
   test('2b. crash + an intervening adjustment → retry must NOT re-apply the original', async () => {
     const prod = await db.product.create({ data: { orgId: orgG.id, name: 'Idem Prod 2b', price: 10, cost: 5, trackStock: true } })
     const key = 'stock-idem-crash-2'
-    const scoped = `stock-adjust:${key}`
+    const scoped = clientOperationIdFor('stock-adjust', key)
 
     // original adjustment 0 → 30, then the "crash" (resultId lost)
     const r1 = await json(await adjustRoute.POST(makeReq('/api/stock/adjust', {
@@ -734,7 +745,7 @@ describe('STOCK-1 — crash-safe stock adjustment idempotency', () => {
 
   test('4. different organization + same key → independent operation', async () => {
     const key = 'stock-idem-shared-org'
-    const scoped = `stock-adjust:${key}`
+    const scoped = clientOperationIdFor('stock-adjust', key)
 
     const org2 = await db.org.create({ data: { name: 'Gate Org B' } })
     const admin2 = await db.user.create({
@@ -793,10 +804,342 @@ describe('STOCK-1 — crash-safe stock adjustment idempotency', () => {
     ])
     expect(c.status).toBe(200)
     expect(d.status).toBe(200)
-    const raceMovements = await db.stockMovement.findMany({ where: { orgId: orgG.id, clientOperationId: `stock-adjust:${key}` } })
+    const raceMovements = await db.stockMovement.findMany({ where: { orgId: orgG.id, clientOperationId: clientOperationIdFor('stock-adjust', key) } })
     expect(raceMovements.length).toBe(1)
     const level2 = await db.stockLevel.findUnique({ where: { productId_warehouseId: { productId: prod2.id, warehouseId: whG.id } } })
     expect(level2?.qty).toBe(33)
     expect(await db.stockMovement.count({ where: { productId: prod2.id, warehouseId: whG.id } })).toBe(1)
+  })
+})
+
+// ─────────── IDEM-2: Idempotency-Key canonicalization ───────────
+// The RAW key is never mutated into the identity. Strict charset validation
+// ([A-Za-z0-9._:-], 6–100) rejects malformed keys with 400 BEFORE any DB
+// touch, and the stored identity is scope:SHA-256(rawKey) so two different
+// raw keys can never alias to one operation (the old regex-cleaning made
+// `abc@123` and `abc123` collide and all-symbol keys collapse to '').
+
+describe('IDEM-2 — Idempotency-Key canonicalization', () => {
+  test('1. same user + same key + same operation → ONE db operation, same result', async () => {
+    const key = 'canon-same-key-1'
+    const r1 = await json(await invoicesRoute.POST(makeReq('/api/invoices', {
+      method: 'POST', session: adminSess(),
+      headers: { 'Idempotency-Key': key },
+      body: { type: 'SALE', taxPercent: 0, paidAmount: 0, items: [{ productId: productG.id, qty: 1, price: 50 }] },
+    })))
+    expect(r1.status).toBe(200)
+    expect(r1.json.data.duplicate).toBe(false)
+    const r2 = await json(await invoicesRoute.POST(makeReq('/api/invoices', {
+      method: 'POST', session: adminSess(),
+      headers: { 'Idempotency-Key': key },
+      body: { type: 'SALE', taxPercent: 0, paidAmount: 0, items: [{ productId: productG.id, qty: 1, price: 50 }] },
+    })))
+    expect(r2.status).toBe(200)
+    expect(r2.json.data.duplicate).toBe(true)
+    expect(r2.json.data.id).toBe(r1.json.data.id)
+    const scoped = clientOperationIdFor('invoice', key)
+    expect(await db.invoice.count({ where: { orgId: orgG.id, clientOperationId: scoped } })).toBe(1)
+  })
+
+  test('2. abc123 vs abc@123 → never aliased; distinct VALID keys are distinct ops', async () => {
+    // abc123 succeeds and creates its own operation
+    const rA = await json(await invoicesRoute.POST(makeReq('/api/invoices', {
+      method: 'POST', session: adminSess(),
+      headers: { 'Idempotency-Key': 'abc123' },
+      body: { type: 'SALE', taxPercent: 0, paidAmount: 0, items: [{ productId: productG.id, qty: 1, price: 10 }] },
+    })))
+    expect(rA.status).toBe(200)
+    const aId = rA.json.data.id
+
+    // abc@123 is INVALID charset under the strict policy → 400, and it must
+    // NOT resolve to (or add to) abc123's operation
+    const rB = await json(await invoicesRoute.POST(makeReq('/api/invoices', {
+      method: 'POST', session: adminSess(),
+      headers: { 'Idempotency-Key': 'abc@123' },
+      body: { type: 'SALE', taxPercent: 0, paidAmount: 0, items: [{ productId: productG.id, qty: 1, price: 10 }] },
+    })))
+    expect(rB.status).toBe(400)
+    expect(rB.json.error).toBe('invalid-idempotency-key')
+    const scopedA = clientOperationIdFor('invoice', 'abc123')
+    expect(await db.invoice.count({ where: { orgId: orgG.id, clientOperationId: scopedA } })).toBe(1)
+
+    // two VALID distinct keys are two independent operations (never aliased)
+    const rC = await json(await invoicesRoute.POST(makeReq('/api/invoices', {
+      method: 'POST', session: adminSess(),
+      headers: { 'Idempotency-Key': 'alpha-one' },
+      body: { type: 'SALE', taxPercent: 0, paidAmount: 0, items: [{ productId: productG.id, qty: 1, price: 10 }] },
+    })))
+    const rD = await json(await invoicesRoute.POST(makeReq('/api/invoices', {
+      method: 'POST', session: adminSess(),
+      headers: { 'Idempotency-Key': 'alpha-two' },
+      body: { type: 'SALE', taxPercent: 0, paidAmount: 0, items: [{ productId: productG.id, qty: 1, price: 10 }] },
+    })))
+    expect(rC.status).toBe(200)
+    expect(rD.status).toBe(200)
+    expect(rC.json.data.id).not.toBe(rD.json.data.id)
+    expect(rC.json.data.id).not.toBe(aId)
+    expect(await db.invoice.count({ where: { orgId: orgG.id, clientOperationId: clientOperationIdFor('invoice', 'alpha-one') } })).toBe(1)
+    expect(await db.invoice.count({ where: { orgId: orgG.id, clientOperationId: clientOperationIdFor('invoice', 'alpha-two') } })).toBe(1)
+  })
+
+  test('3. !!!!!! → 400, no operation created', async () => {
+    const before = await db.invoice.count({ where: { orgId: orgG.id } })
+    const r = await json(await invoicesRoute.POST(makeReq('/api/invoices', {
+      method: 'POST', session: adminSess(),
+      headers: { 'Idempotency-Key': '!!!!!!' },
+      body: { type: 'SALE', taxPercent: 0, paidAmount: 0, items: [{ productId: productG.id, qty: 1, price: 10 }] },
+    })))
+    expect(r.status).toBe(400)
+    expect(r.json.error).toBe('invalid-idempotency-key')
+    expect(await db.invoice.count({ where: { orgId: orgG.id } })).toBe(before) // nothing executed
+    // and no claim row leaked for the rejected key
+    expect(await db.idempotencyKey.count({ where: { orgId: orgG.id, key: { contains: '!!!!!!' } } })).toBe(0)
+  })
+
+  test('4. same key + different user → 403, one operation', async () => {
+    const key = 'canon-owner-key-4'
+    const r1 = await json(await invoicesRoute.POST(makeReq('/api/invoices', {
+      method: 'POST', session: adminSess(),
+      headers: { 'Idempotency-Key': key },
+      body: { type: 'SALE', taxPercent: 0, paidAmount: 0, items: [{ productId: productG.id, qty: 1, price: 10 }] },
+    })))
+    expect(r1.status).toBe(200)
+    const r2 = await json(await invoicesRoute.POST(makeReq('/api/invoices', {
+      method: 'POST', session: managerSess(),
+      headers: { 'Idempotency-Key': key },
+      body: { type: 'SALE', taxPercent: 0, paidAmount: 0, items: [{ productId: productG.id, qty: 1, price: 10 }] },
+    })))
+    expect(r2.status).toBe(403)
+    expect(await db.invoice.count({ where: { orgId: orgG.id, clientOperationId: clientOperationIdFor('invoice', key) } })).toBe(1)
+  })
+
+  test('5. same key + different organization → independent operations', async () => {
+    const key = 'canon-shared-org-5'
+    const org2 = await db.org.create({ data: { name: 'Gate Org C' } })
+    const admin2 = await db.user.create({
+      data: { orgId: org2.id, email: 'admin-c@gate.test', name: 'Gate Admin C', passwordHash: auth.hashPassword('gate-pass-123'), role: 'ADMIN' },
+    })
+    const wh2 = await db.warehouse.create({ data: { orgId: org2.id, name: 'Gate-WH-C', isDefault: true } })
+    const prod2 = await db.product.create({ data: { orgId: org2.id, name: 'Canon Prod C', price: 10, cost: 5, trackStock: true } })
+    const org2Sess = { id: admin2.id, orgId: org2.id, role: 'ADMIN' } as Sess
+
+    const r1 = await json(await invoicesRoute.POST(makeReq('/api/invoices', {
+      method: 'POST', session: adminSess(),
+      headers: { 'Idempotency-Key': key },
+      body: { type: 'SALE', taxPercent: 0, paidAmount: 0, items: [{ productId: productG.id, qty: 1, price: 10 }] },
+    })))
+    const r2 = await json(await invoicesRoute.POST(makeReq('/api/invoices', {
+      method: 'POST', session: org2Sess,
+      headers: { 'Idempotency-Key': key },
+      body: { type: 'SALE', taxPercent: 0, paidAmount: 0, items: [{ productId: prod2.id, qty: 2, price: 20 }] },
+    })))
+    expect(r1.status).toBe(200)
+    expect(r2.status).toBe(200)
+    expect(r1.json.data.duplicate).toBe(false)
+    expect(r2.json.data.duplicate).toBe(false)
+    const scoped = clientOperationIdFor('invoice', key)
+    expect(await db.invoice.count({ where: { orgId: orgG.id, clientOperationId: scoped } })).toBe(1)
+    expect(await db.invoice.count({ where: { orgId: org2.id, clientOperationId: scoped } })).toBe(1)
+  })
+
+  // Test 6 (crash window: COMMIT → crash → resultId lost → retry must not
+  // create a second financial operation or StockMovement) is covered by
+  // P0-07 test 1/2/3 (invoice + voucher), STOCK-1 test 2/2b (stock
+  // adjustment incl. the intervening-adjustment interleave) — all asserted
+  // against the SHA-256 scoped ids via clientOperationIdFor().
+})
+
+// ─────────── STOCK-2: negative-stock policy (server-side, atomic) ───────────
+// Transfers ALWAYS enforce source stock >= requested (a transfer cannot move
+// goods the warehouse does not have). Sales / purchase-cancellations follow
+// the org-level server-side setting allowNegativeStock (default true =
+// documented allow-with-warning behavior; false = atomic rejection).
+
+describe('STOCK-2 — negative-stock policy (atomic enforcement)', () => {
+  test('1. stock=5, transfer=100 → rejected, stock unchanged, nothing created', async () => {
+    const prod = await db.product.create({ data: { orgId: orgG.id, name: 'Neg Prod 1', price: 10, cost: 5, trackStock: true } })
+    const wh2 = await db.warehouse.create({ data: { orgId: orgG.id, name: 'Gate-WH-N1' } })
+    await db.stockLevel.create({ data: { productId: prod.id, warehouseId: whG.id, qty: 5 } })
+    await db.stockMovement.create({ data: { orgId: orgG.id, productId: prod.id, warehouseId: whG.id, qty: 5, kind: 'OPENING', refType: 'OPENING' } })
+
+    const res = await json(await transfersRoute.POST(makeReq('/api/transfers', {
+      method: 'POST', session: adminSess(),
+      body: { fromWarehouseId: whG.id, toWarehouseId: wh2.id, items: [{ productId: prod.id, qty: 100 }] },
+    })))
+    expect([400, 409]).toContain(res.status)
+    expect(res.status).toBe(409)
+    expect(res.json.error).toBe('insufficient-stock')
+
+    const level = await db.stockLevel.findUnique({ where: { productId_warehouseId: { productId: prod.id, warehouseId: whG.id } } })
+    expect(level?.qty).toBe(5) // never -95
+    expect(await db.stockLevel.count({ where: { productId: prod.id, warehouseId: wh2.id } })).toBe(0)
+    expect(await db.stockMovement.count({ where: { productId: prod.id, kind: { startsWith: 'TRANSFER' } } })).toBe(0)
+    expect(await db.transfer.count({ where: { orgId: orgG.id } })).toBe(0)
+  })
+
+  test('2. stock=100, transfer=80 → success, source=20, target=80, ledger consistent', async () => {
+    const prod = await db.product.create({ data: { orgId: orgG.id, name: 'Neg Prod 2', price: 10, cost: 5, trackStock: true } })
+    const wh2 = await db.warehouse.create({ data: { orgId: orgG.id, name: 'Gate-WH-N2' } })
+    await db.stockLevel.create({ data: { productId: prod.id, warehouseId: whG.id, qty: 100 } })
+    await db.stockMovement.create({ data: { orgId: orgG.id, productId: prod.id, warehouseId: whG.id, qty: 100, kind: 'OPENING', refType: 'OPENING' } })
+
+    const res = await json(await transfersRoute.POST(makeReq('/api/transfers', {
+      method: 'POST', session: adminSess(),
+      body: { fromWarehouseId: whG.id, toWarehouseId: wh2.id, items: [{ productId: prod.id, qty: 80 }] },
+    })))
+    expect(res.status).toBe(200)
+
+    const src = await db.stockLevel.findUnique({ where: { productId_warehouseId: { productId: prod.id, warehouseId: whG.id } } })
+    const dst = await db.stockLevel.findUnique({ where: { productId_warehouseId: { productId: prod.id, warehouseId: wh2.id } } })
+    expect(src?.qty).toBe(20)
+    expect(dst?.qty).toBe(80)
+
+    const movements = await db.stockMovement.findMany({ where: { productId: prod.id } })
+    const sumFrom = movements.filter((m) => m.warehouseId === whG.id).reduce((s, m) => s + m.qty, 0)
+    const sumTo = movements.filter((m) => m.warehouseId === wh2.id).reduce((s, m) => s + m.qty, 0)
+    expect(sumFrom).toBe(20) // 100 - 80
+    expect(sumTo).toBe(80)
+    expect(src!.qty).toBe(sumFrom)
+    expect(dst!.qty).toBe(sumTo)
+    // ledger movements reference the created transfer document
+    const transferRow = await db.transfer.findFirst({ where: { orgId: orgG.id } })
+    expect(transferRow).not.toBeNull()
+    const transferMovements = movements.filter((m) => m.refType === 'TRANSFER')
+    expect(transferMovements.length).toBe(2)
+    expect(transferMovements.every((m) => m.refId === transferRow!.id)).toBe(true)
+  })
+
+  test('3. concurrent transfers of 80 from stock=100 (Promise.all) → one succeeds, one 409, final=20', async () => {
+    const prod = await db.product.create({ data: { orgId: orgG.id, name: 'Neg Prod 3', price: 10, cost: 5, trackStock: true } })
+    const wh2 = await db.warehouse.create({ data: { orgId: orgG.id, name: 'Gate-WH-N3' } })
+    await db.stockLevel.create({ data: { productId: prod.id, warehouseId: whG.id, qty: 100 } })
+    await db.stockMovement.create({ data: { orgId: orgG.id, productId: prod.id, warehouseId: whG.id, qty: 100, kind: 'OPENING', refType: 'OPENING' } })
+
+    const body = { fromWarehouseId: whG.id, toWarehouseId: wh2.id, items: [{ productId: prod.id, qty: 80 }] }
+    const [a, b] = await Promise.all([
+      transfersRoute.POST(makeReq('/api/transfers', { method: 'POST', session: adminSess(), body })),
+      transfersRoute.POST(makeReq('/api/transfers', { method: 'POST', session: managerSess(), body })),
+    ])
+    const statuses = [a.status, b.status].sort()
+    expect(statuses).toEqual([200, 409]) // FORBIDDEN: both succeed / final < 0
+
+    const level = await db.stockLevel.findUnique({ where: { productId_warehouseId: { productId: prod.id, warehouseId: whG.id } } })
+    expect(level?.qty).toBe(20)
+    const movements = await db.stockMovement.findMany({ where: { productId: prod.id, warehouseId: whG.id, kind: 'TRANSFER_OUT' } })
+    expect(movements.length).toBe(1)
+    expect(movements[0].qty).toBe(-80)
+    const sumFrom = await db.stockMovement.findMany({ where: { productId: prod.id, warehouseId: whG.id } }).then((ms) => ms.reduce((s, m) => s + m.qty, 0))
+    expect(sumFrom).toBe(20)
+  })
+
+  test('4. transfer consistency — StockLevel, StockMovement and Transfer all agree', async () => {
+    const prod = await db.product.create({ data: { orgId: orgG.id, name: 'Neg Prod 4', price: 10, cost: 5, trackStock: true } })
+    const wh2 = await db.warehouse.create({ data: { orgId: orgG.id, name: 'Gate-WH-N4' } })
+    await db.stockLevel.create({ data: { productId: prod.id, warehouseId: whG.id, qty: 50 } })
+    await db.stockMovement.create({ data: { orgId: orgG.id, productId: prod.id, warehouseId: whG.id, qty: 50, kind: 'OPENING', refType: 'OPENING' } })
+
+    const res = await json(await transfersRoute.POST(makeReq('/api/transfers', {
+      method: 'POST', session: adminSess(),
+      body: { fromWarehouseId: whG.id, toWarehouseId: wh2.id, items: [{ productId: prod.id, qty: 30 }], note: 'consistency' },
+    })))
+    expect(res.status).toBe(200)
+    const transferId = res.json.data.id
+
+    const transferRow = await db.transfer.findUnique({ where: { id: transferId }, include: { items: true } })
+    expect(transferRow?.items.length).toBe(1)
+    expect(transferRow?.items[0].qty).toBe(30)
+    const movements = await db.stockMovement.findMany({ where: { refType: 'TRANSFER', refId: transferId } })
+    expect(movements.length).toBe(2) // out + in pair
+    const out = movements.find((m) => m.kind === 'TRANSFER_OUT')!
+    const inn = movements.find((m) => m.kind === 'TRANSFER_IN')!
+    expect(out.warehouseId).toBe(whG.id)
+    expect(out.qty).toBe(-30)
+    expect(inn.warehouseId).toBe(wh2.id)
+    expect(inn.qty).toBe(30)
+    const src = await db.stockLevel.findUnique({ where: { productId_warehouseId: { productId: prod.id, warehouseId: whG.id } } })
+    const dst = await db.stockLevel.findUnique({ where: { productId_warehouseId: { productId: prod.id, warehouseId: wh2.id } } })
+    expect(src?.qty).toBe(20)
+    expect(dst?.qty).toBe(30)
+  })
+
+  test('5. SALE under allowNegativeStock=false → 409 atomically; default true keeps documented allow-with-warning', async () => {
+    const prod = await db.product.create({ data: { orgId: orgG.id, name: 'Neg Sale Prod', price: 10, cost: 5, trackStock: true } })
+    await db.stockLevel.create({ data: { productId: prod.id, warehouseId: whG.id, qty: 5 } })
+    await db.stockMovement.create({ data: { orgId: orgG.id, productId: prod.id, warehouseId: whG.id, qty: 5, kind: 'OPENING', refType: 'OPENING' } })
+
+    // policy OFF (admin opted into strict stock) → rejected atomically
+    await db.org.update({ where: { id: orgG.id }, data: { allowNegativeStock: false } })
+    const r1 = await json(await invoicesRoute.POST(makeReq('/api/invoices', {
+      method: 'POST', session: adminSess(),
+      body: { type: 'SALE', taxPercent: 0, paidAmount: 0, items: [{ productId: prod.id, qty: 100, price: 10 }] },
+    })))
+    expect(r1.status).toBe(409)
+    expect(r1.json.error).toBe('insufficient-stock')
+    expect(await db.invoice.count({ where: { orgId: orgG.id, status: { not: 'CANCELLED' }, items: { some: { productId: prod.id, qty: 100 } } } })).toBe(0)
+    expect(await db.stockMovement.count({ where: { productId: prod.id, kind: 'SALE' } })).toBe(0)
+    const lvl1 = await db.stockLevel.findUnique({ where: { productId_warehouseId: { productId: prod.id, warehouseId: whG.id } } })
+    expect(lvl1?.qty).toBe(5)
+
+    // policy ON (default) → documented POS behavior: allowed WITH warning
+    await db.org.update({ where: { id: orgG.id }, data: { allowNegativeStock: true } })
+    const r2 = await json(await invoicesRoute.POST(makeReq('/api/invoices', {
+      method: 'POST', session: adminSess(),
+      body: { type: 'SALE', taxPercent: 0, paidAmount: 0, items: [{ productId: prod.id, qty: 100, price: 10 }] },
+    })))
+    expect(r2.status).toBe(200)
+    expect(Array.isArray(r2.json.data.warnings)).toBe(true)
+    expect(r2.json.data.warnings.length).toBeGreaterThan(0)
+    const lvl2 = await db.stockLevel.findUnique({ where: { productId_warehouseId: { productId: prod.id, warehouseId: whG.id } } })
+    expect(lvl2?.qty).toBe(-95)
+  })
+
+  test('6. PURCHASE cancel — allowed (negative) by default; atomically rejected when policy disabled', async () => {
+    const prod = await db.product.create({ data: { orgId: orgG.id, name: 'Neg PCancel Prod', price: 10, cost: 5, trackStock: true } })
+    const prodB = await db.product.create({ data: { orgId: orgG.id, name: 'Neg PCancel Prod B', price: 10, cost: 5, trackStock: true } })
+
+    // default (allowNegativeStock=true): purchase +10, sell 10 → 0, cancel → -10 (documented current behavior)
+    const inv1 = await json(await invoicesRoute.POST(makeReq('/api/invoices', {
+      method: 'POST', session: adminSess(),
+      body: { type: 'PURCHASE', taxPercent: 0, paidAmount: 0, items: [{ productId: prod.id, qty: 10, price: 5 }] },
+    })))
+    expect(inv1.status).toBe(200)
+    const sale1 = await json(await invoicesRoute.POST(makeReq('/api/invoices', {
+      method: 'POST', session: adminSess(),
+      body: { type: 'SALE', taxPercent: 0, paidAmount: 0, items: [{ productId: prod.id, qty: 10, price: 10 }] },
+    })))
+    expect(sale1.status).toBe(200)
+    const del1 = await json(await invoiceDetailRoute.DELETE(makeReq(`/api/invoices/${inv1.json.data.invoice.id}`, {
+      method: 'DELETE', session: adminSess(),
+    }), { params: Promise.resolve({ id: inv1.json.data.invoice.id }) }))
+    expect(del1.status).toBe(200)
+    const lvlA = await db.stockLevel.findUnique({ where: { productId_warehouseId: { productId: prod.id, warehouseId: whG.id } } })
+    expect(lvlA?.qty).toBe(-10)
+
+    // policy disabled (fresh product, isolated levels): purchase +10, sell 10 → 0,
+    // cancel purchase → 409 (stock would go negative), nothing changed
+    await db.org.update({ where: { id: orgG.id }, data: { allowNegativeStock: false } })
+    const inv2 = await json(await invoicesRoute.POST(makeReq('/api/invoices', {
+      method: 'POST', session: adminSess(),
+      body: { type: 'PURCHASE', taxPercent: 0, paidAmount: 0, items: [{ productId: prodB.id, qty: 10, price: 5 }] },
+    })))
+    expect(inv2.status).toBe(200)
+    const sale2 = await json(await invoicesRoute.POST(makeReq('/api/invoices', {
+      method: 'POST', session: adminSess(),
+      body: { type: 'SALE', taxPercent: 0, paidAmount: 0, items: [{ productId: prodB.id, qty: 10, price: 10 }] },
+    })))
+    expect(sale2.status).toBe(200)
+    const lvlB = await db.stockLevel.findUnique({ where: { productId_warehouseId: { productId: prodB.id, warehouseId: whG.id } } })
+    expect(lvlB?.qty).toBe(0)
+    const del2 = await json(await invoiceDetailRoute.DELETE(makeReq(`/api/invoices/${inv2.json.data.invoice.id}`, {
+      method: 'DELETE', session: adminSess(),
+    }), { params: Promise.resolve({ id: inv2.json.data.invoice.id }) }))
+    expect(del2.status).toBe(409)
+    expect(del2.json.error).toBe('insufficient-stock')
+    const stillActive = await db.invoice.findUnique({ where: { id: inv2.json.data.invoice.id } })
+    expect(stillActive?.status).not.toBe('CANCELLED')
+    expect(await db.stockMovement.count({ where: { productId: prodB.id, kind: 'PURCHASE_CANCEL', refId: inv2.json.data.invoice.id } })).toBe(0)
+
+    // restore default policy
+    await db.org.update({ where: { id: orgG.id }, data: { allowNegativeStock: true } })
   })
 })

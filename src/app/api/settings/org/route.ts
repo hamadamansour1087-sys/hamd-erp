@@ -29,6 +29,12 @@ export async function PUT(req: NextRequest) {
     data.taxPercent = tax
   }
 
+  // Server-side negative-stock policy switch (see Org model docs).
+  if (body.allowNegativeStock !== undefined) {
+    if (typeof body.allowNegativeStock !== 'boolean') return bad('invalid-allow-negative-stock')
+    data.allowNegativeStock = body.allowNegativeStock
+  }
+
   ;['phone', 'address'].forEach((k) => {
     if (body[k] !== undefined) data[k] = optStr(body[k])
   })
@@ -46,7 +52,7 @@ export async function PUT(req: NextRequest) {
   await db.org.update({ where: { id: s.orgId }, data })
   const org = await db.org.findUnique({
     where: { id: s.orgId },
-    select: { id: true, name: true, currencyCode: true, taxPercent: true, phone: true, address: true, logo: true },
+    select: { id: true, name: true, currencyCode: true, taxPercent: true, phone: true, address: true, logo: true, allowNegativeStock: true },
   })
   return ok(org)
 }
@@ -57,7 +63,7 @@ export async function GET(req: NextRequest) {
   if (!s) return unauthorized()
   const org = await db.org.findUnique({
     where: { id: s.orgId },
-    select: { id: true, name: true, currencyCode: true, taxPercent: true, phone: true, address: true, logo: true },
+    select: { id: true, name: true, currencyCode: true, taxPercent: true, phone: true, address: true, logo: true, allowNegativeStock: true },
   })
   return ok(org)
 }

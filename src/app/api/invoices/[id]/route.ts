@@ -1,5 +1,5 @@
 import { getSession, isStaff } from '@/lib/auth'
-import { ok, bad, unauthorized, forbidden } from '@/lib/api-helpers'
+import { ok, bad, unauthorized, forbidden, InsufficientStockError } from '@/lib/api-helpers'
 import { NextRequest } from 'next/server'
 import { db } from '@/lib/db'
 
@@ -97,16 +97,35 @@ export async function DELETE(req: NextRequest, ctx: { params: Promise<{ id: stri
   const whId = inv.warehouseId
   if (!whId) return bad('warehouse-missing')
 
-  await db.$transaction(async (tx) => {
+  // Server-side negative-stock policy (org setting, default true). A PURCHASE
+  // cancel REMOVES the received goods from stock (delta negative) — when the
+  // admin disabled negative stock and the goods were already sold, the cancel
+  // is rejected atomically instead of silently driving stock below zero.
+  const allowNegativeStock =
+    (await db.org.findUnique({ where: { id: s.orgId }, select: { allowNegativeStock: true } }))
+      ?.allowNegativeStock ?? true
+
+  try {
+    await db.$transaction(async (tx) => {
     for (const it of inv.items) {
       const product = await tx.product.findFirst({ where: { id: it.productId, orgId: s.orgId }, select: { trackStock: true } })
       if (!product?.trackStock) continue
       const delta = inv.type === 'SALE' ? it.qty : -it.qty // restore on sale-cancel / remove on purchase-cancel
-      await tx.stockLevel.upsert({
-        where: { productId_warehouseId: { productId: it.productId, warehouseId: whId } },
-        create: { productId: it.productId, warehouseId: whId, qty: delta },
-        update: { qty: { increment: delta } },
-      })
+      if (inv.type === 'PURCHASE' && !allowNegativeStock) {
+        // ATOMIC negative-stock guard: WHERE (qty >= requested) is part of
+        // the UPDATE — no read-then-write race; 0 rows ⇒ 409, tx rolls back.
+        const cas = await tx.stockLevel.updateMany({
+          where: { productId: it.productId, warehouseId: whId, qty: { gte: it.qty } },
+          data: { qty: { decrement: it.qty } },
+        })
+        if (cas.count === 0) throw new InsufficientStockError()
+      } else {
+        await tx.stockLevel.upsert({
+          where: { productId_warehouseId: { productId: it.productId, warehouseId: whId } },
+          create: { productId: it.productId, warehouseId: whId, qty: delta },
+          update: { qty: { increment: delta } },
+        })
+      }
       await tx.stockMovement.create({
         data: {
           orgId: s.orgId,
@@ -143,6 +162,10 @@ export async function DELETE(req: NextRequest, ctx: { params: Promise<{ id: stri
     // Tenant-scoped write: matches on id + orgId.
     await tx.invoice.updateMany({ where: { id: inv.id, orgId: s.orgId }, data: { status: 'CANCELLED' } })
   })
+  } catch (e) {
+    if (e instanceof InsufficientStockError) return bad('insufficient-stock', 409)
+    throw e
+  }
 
   return ok({ id, status: 'CANCELLED' })
 }

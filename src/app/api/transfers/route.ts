@@ -11,12 +11,30 @@ import {
   withIdempotency,
   okIdempotent,
   isUniqueViolation,
+  InsufficientStockError,
 } from '@/lib/api-helpers'
 import { NextRequest } from 'next/server'
 import { db } from '@/lib/db'
 
-
-
+/**
+ * In-process keyed mutex (same pattern as stock/adjust) — serializes transfers
+ * per source warehouse. SQLite allows a single writer; concurrent interactive
+ * transactions would otherwise queue on the write lock (and can exceed
+ * Prisma's 5s timeout under burst). The conditional decrement inside remains
+ * the correctness guarantee: it is a single atomic UPDATE whose WHERE clause
+ * enforces stock >= requested, so a negative source level is impossible.
+ */
+const stockLocks = new Map<string, Promise<unknown>>()
+async function withStockLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
+  const prev = stockLocks.get(key) ?? Promise.resolve()
+  const next = prev.catch(() => undefined).then(fn)
+  stockLocks.set(key, next)
+  try {
+    return await next
+  } finally {
+    if (stockLocks.get(key) === next) stockLocks.delete(key)
+  }
+}
 /**
  * GET /api/transfers — recent transfers with names.
  */
@@ -65,6 +83,12 @@ export async function GET(req: NextRequest) {
 /**
  * POST /api/transfers — move stock between warehouses (staff only).
  * body { fromWarehouseId, toWarehouseId, items:[{productId, qty}], note? }
+ *
+ * NEGATIVE-STOCK POLICY (unconditional): a transfer moves physical goods, so
+ * the source must hold stock >= requested. The check and the decrement are
+ * ONE atomic statement (conditional updateMany: WHERE qty >= requested) —
+ * there is no read-then-write race; two concurrent transfers of 80 from 100
+ * yield exactly one success and one 409, never -60.
  */
 export async function POST(req: NextRequest) {
   const s = await getSession(req)
@@ -101,8 +125,10 @@ export async function POST(req: NextRequest) {
   }
   if (items.length === 0) return bad('items-invalid')
 
-  const result = await withIdempotency(req, s, 'transfer', async (clientOpId) => {
-    const created = await db.$transaction(async (tx) => {
+  let result
+  try {
+    result = await withIdempotency(req, s, 'transfer', async (clientOpId) => {
+      const created = await withStockLock(`transfer:${fromId}`, () => db.$transaction(async (tx) => {
     const c = await tx.counter.upsert({
       where: { orgId_docKey: { orgId: s.orgId, docKey: 'TRF' } },
       create: { orgId: s.orgId, docKey: 'TRF', next: 2 },
@@ -142,13 +168,15 @@ export async function POST(req: NextRequest) {
     }
 
     for (const it of items) {
-      // decrement source
-      const src = await tx.stockLevel.upsert({
-        where: { productId_warehouseId: { productId: it.productId, warehouseId: fromId } },
-        create: { productId: it.productId, warehouseId: fromId, qty: -it.qty },
-        update: { qty: { decrement: it.qty } },
+      // ATOMIC negative-stock guard at the source: the WHERE clause is part
+      // of the UPDATE statement (no read-then-write window). 0 rows matched
+      // ⇒ the source does not hold the requested qty (missing row = qty 0).
+      // Partial writes roll back with the transaction when this throws.
+      const cas = await tx.stockLevel.updateMany({
+        where: { productId: it.productId, warehouseId: fromId, qty: { gte: it.qty } },
+        data: { qty: { decrement: it.qty } },
       })
-      void src
+      if (cas.count === 0) throw new InsufficientStockError()
       // increment target
       await tx.stockLevel.upsert({
         where: { productId_warehouseId: { productId: it.productId, warehouseId: toId } },
@@ -182,10 +210,16 @@ export async function POST(req: NextRequest) {
       })
     }
     return transfer
-  })
+  }))
 
-    return { id: created.id, number: created.number, itemCount: items.length }
-  })
+      return { id: created.id, number: created.number, itemCount: items.length }
+    })
+  } catch (e) {
+    // withIdempotency released the claim before rethrowing — the client can
+    // retry the same key once stock is available.
+    if (e instanceof InsufficientStockError) return bad('insufficient-stock', 409)
+    throw e
+  }
 
   return okIdempotent(result)
 }

@@ -12,6 +12,7 @@ import {
   withIdempotency,
   okIdempotent,
   isUniqueViolation,
+  InsufficientStockError,
 } from '@/lib/api-helpers'
 import { NextRequest } from 'next/server'
 import { db } from '@/lib/db'
@@ -106,7 +107,9 @@ export async function GET(req: NextRequest) {
  * Effects inside one transaction:
  *  - sequential number per org+type (Counter INV/PUR)
  *  - item snapshots + costAtSale for profit tracking
- *  - StockLevel update + ledger movements per item (allows negative w/ warning)
+ *  - StockLevel update + ledger movements per item (allows negative w/ warning
+ *    when org.allowNegativeStock=true — documented POS feature; when false the
+ *    SALE decrement is an ATOMIC conditional update: stock < requested ⇒ 409)
  *  - auto payment voucher (RCV/PMT) when paidAmount>0 and a party exists or OTHER allowed
  */
 export async function POST(req: NextRequest) {
@@ -165,6 +168,11 @@ export async function POST(req: NextRequest) {
     warnNegative: boolean; currentQty: number
   }> = []
   const warnings: string[] = []
+  // Server-side negative-stock policy (org setting, default true = the
+  // documented allow-with-warning behavior).
+  const allowNegativeStock =
+    (await db.org.findUnique({ where: { id: s.orgId }, select: { allowNegativeStock: true } }))
+      ?.allowNegativeStock ?? true
 
   for (const it of itemsInput) {
     const productId = str(it.productId)
@@ -222,7 +230,9 @@ export async function POST(req: NextRequest) {
   if (dueDateRaw && isNaN(new Date(dueDateRaw).getTime())) return bad('invalid-due-date')
   const dueDate = dueDateRaw
 
-  const result = await withIdempotency(req, s, 'invoice', async (clientOpId) => {
+  let result
+  try {
+    result = await withIdempotency(req, s, 'invoice', async (clientOpId) => {
     const created = await db.$transaction(async (tx) => {
     const number = await nextDocNumber(tx, s.orgId, type === 'SALE' ? 'INV' : 'PUR')
     // CRASH-WINDOW DEDUPE: the scoped idempotency key is embedded in the
@@ -289,11 +299,24 @@ export async function POST(req: NextRequest) {
     // stock effects
     for (const it of normItems) {
       const delta = type === 'SALE' ? -it.qty : it.qty
-      await tx.stockLevel.upsert({
-        where: { productId_warehouseId: { productId: it.productId, warehouseId: warehouse!.id } },
-        create: { productId: it.productId, warehouseId: warehouse!.id, qty: delta },
-        update: { qty: { increment: delta } },
-      })
+      if (type === 'SALE' && !allowNegativeStock) {
+        // ATOMIC negative-stock guard: the WHERE clause (qty >= requested) is
+        // part of the UPDATE statement — no read-then-write race. 0 rows ⇒
+        // insufficient stock (missing row = qty 0); the transaction rolls back.
+        const cas = await tx.stockLevel.updateMany({
+          where: { productId: it.productId, warehouseId: warehouse!.id, qty: { gte: it.qty } },
+          data: { qty: { decrement: it.qty } },
+        })
+        if (cas.count === 0) throw new InsufficientStockError()
+      } else {
+        // allowNegativeStock=true (default): documented behavior — sale may
+        // drive stock below zero; the warning was collected in normItems.
+        await tx.stockLevel.upsert({
+          where: { productId_warehouseId: { productId: it.productId, warehouseId: warehouse!.id } },
+          create: { productId: it.productId, warehouseId: warehouse!.id, qty: delta },
+          update: { qty: { increment: delta } },
+        })
+      }
       await tx.stockMovement.create({
         data: {
           orgId: s.orgId,
@@ -351,6 +374,12 @@ export async function POST(req: NextRequest) {
       voucherNumber: created.voucherNumber,
     }
   })
+  } catch (e) {
+    // withIdempotency released the claim before rethrowing — the client can
+    // retry the same key once stock is available.
+    if (e instanceof InsufficientStockError) return bad('insufficient-stock', 409)
+    throw e
+  }
 
   return okIdempotent(result, (v) => ({
     type,
