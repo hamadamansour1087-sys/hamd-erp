@@ -35,12 +35,26 @@ export async function GET(req: NextRequest) {
 
     if (!org) return bad('not-found', 404)
 
-    const backup = {
-      meta: {
-        app: 'tijara',
-        version: 1,
-        exportedAt: new Date().toISOString(),
+    // TRUNCATION TRANSPARENCY: the backup caps huge tables so a runaway tenant
+    // cannot OOM the server — but a "full backup" that silently drops rows is a
+    // data-integrity lie. Every capped table is flagged in meta so the operator
+    // knows this file is partial and must archive older data separately.
+    const meta = {
+      app: 'tijara',
+      version: 2,
+      exportedAt: new Date().toISOString(),
+      truncated: {
+        stockMovements: movements.length >= 5000,
+        invoices: invoices.length >= 5000,
+        invoiceItems: items.length >= 20000,
+        vouchers: vouchers.length >= 5000,
+        expenses: expenses.length >= 5000,
+        transfers: transfers.length >= 3000,
       },
+    }
+
+    const backup = {
+      meta,
       org,
       users,
       categories,
@@ -59,7 +73,9 @@ export async function GET(req: NextRequest) {
     }
 
     const stamp = new Date().toISOString().slice(0, 10)
-    return new Response(JSON.stringify(backup, null, 2), {
+    // No JSON indent: a 20k-item backup pretty-printed roughly doubles the
+    // memory spike and file size for zero machine-readability benefit.
+    return new Response(JSON.stringify(backup), {
       headers: {
         'Content-Type': 'application/json; charset=utf-8',
         'Content-Disposition': `attachment; filename="tijara-backup-${stamp}.json"`,

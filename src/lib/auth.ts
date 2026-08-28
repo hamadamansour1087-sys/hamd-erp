@@ -1,7 +1,14 @@
-import { createHmac, randomBytes, scryptSync, timingSafeEqual } from 'crypto'
+import { createHmac, randomBytes, scryptSync, scrypt as _scrypt, timingSafeEqual } from 'crypto'
+import { promisify } from 'util'
 import { NextRequest } from 'next/server'
 import { db } from '@/lib/db'
 import type { SessionUser } from '@/lib/types'
+
+const scryptAsync = promisify(_scrypt) as (
+  password: string,
+  salt: string,
+  keylen: number
+) => Promise<Buffer>
 
 const COOKIE_NAME = 'session'
 const MAX_AGE = 60 * 60 * 24 * 30 // 30 days
@@ -52,6 +59,31 @@ export function verifyPassword(password: string, stored: string): boolean {
     const [salt, hash] = stored.split(':')
     if (!salt || !hash) return false
     const candidate = scryptSync(password, salt, 64)
+    const expected = Buffer.from(hash, 'hex')
+    if (candidate.length !== expected.length) return false
+    return timingSafeEqual(candidate, expected)
+  } catch {
+    return false
+  }
+}
+
+/**
+ * ASYNC variants for REQUEST-PATH use — scrypt is deliberately expensive
+ * (~50–100ms); the sync versions block the event loop for the whole process
+ * on every login/user-create, stalling every other request. Tests and the
+ * seed script keep the sync variants; network handlers use these.
+ */
+export async function hashPasswordAsync(password: string): Promise<string> {
+  const salt = randomBytes(16).toString('hex')
+  const hash = (await scryptAsync(password, salt, 64)).toString('hex')
+  return `${salt}:${hash}`
+}
+
+export async function verifyPasswordAsync(password: string, stored: string): Promise<boolean> {
+  try {
+    const [salt, hash] = stored.split(':')
+    if (!salt || !hash) return false
+    const candidate = await scryptAsync(password, salt, 64)
     const expected = Buffer.from(hash, 'hex')
     if (candidate.length !== expected.length) return false
     return timingSafeEqual(candidate, expected)

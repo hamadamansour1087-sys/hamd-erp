@@ -1,4 +1,4 @@
-import { getSession, isStaff } from '@/lib/auth'
+import { getSession, isStaff, isAdmin } from '@/lib/auth'
 import { ok, bad, str, optStr, num, unauthorized, forbidden } from '@/lib/api-helpers'
 import { NextRequest } from 'next/server'
 import { db } from '@/lib/db'
@@ -29,8 +29,10 @@ export async function PUT(req: NextRequest) {
     data.taxPercent = tax
   }
 
-  // Server-side negative-stock policy switch (see Org model docs).
+  // Server-side negative-stock policy switch (see Org model docs). This is a
+  // FINANCIAL-INTEGRITY switch — ADMIN only; managers keep profile editing.
   if (body.allowNegativeStock !== undefined) {
+    if (!isAdmin(s)) return forbidden()
     if (typeof body.allowNegativeStock !== 'boolean') return bad('invalid-allow-negative-stock')
     data.allowNegativeStock = body.allowNegativeStock
   }
@@ -40,10 +42,12 @@ export async function PUT(req: NextRequest) {
   })
 
   // logo as data URL only — remote http(s) URLs are rejected so the server never
-  // fetches attacker-controlled URLs (SSRF hardening at the source).
+  // fetches attacker-controlled URLs (SSRF hardening at the source). Raster
+  // formats only: SVG is executable markup and a stored-XSS footgun wherever a
+  // future surface renders it outside a sandboxed <img>.
   if (body.logo !== undefined) {
     const logo = optStr(body.logo)
-    if (logo && (logo.length > 600_000 || !logo.startsWith('data:image/'))) {
+    if (logo && (logo.length > 600_000 || !/^data:image\/(png|jpe?g|webp|gif);base64,/.test(logo))) {
       return bad('invalid-logo')
     }
     data.logo = logo

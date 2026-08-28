@@ -9,9 +9,11 @@ import {
   unauthorized,
   forbidden,
   money,
+  safeDate,
   withIdempotency,
   okIdempotent,
   isUniqueViolation,
+  OperationConflictError,
 } from '@/lib/api-helpers'
 import { NextRequest } from 'next/server'
 import { db } from '@/lib/db'
@@ -101,6 +103,17 @@ export async function POST(req: NextRequest) {
   const customerId = optStr(body.customerId)
   const supplierId = optStr(body.supplierId)
 
+  // TENANT-SAFETY: party references must belong to the caller's org. The FK
+  // alone would happily accept another tenant's id (existence ≠ ownership).
+  if (customerId) {
+    const c = await db.customer.findFirst({ where: { id: customerId, orgId: s.orgId }, select: { id: true } })
+    if (!c) return bad('customer-not-found')
+  }
+  if (supplierId) {
+    const sup = await db.supplier.findFirst({ where: { id: supplierId, orgId: s.orgId }, select: { id: true } })
+    if (!sup) return bad('supplier-not-found')
+  }
+
   // Validate the linked invoice up-front (existence/type/state) — the money math
   // itself happens inside the transaction below.
   if (invoiceId) {
@@ -114,8 +127,9 @@ export async function POST(req: NextRequest) {
     if (inv.type !== expectLinked) return bad('invoice-type-mismatch')
   }
 
-  const result = await withIdempotency(req, s, 'voucher', async (clientOpId) => {
-    const created = await db.$transaction(async (tx) => {
+  try {
+    const result = await withIdempotency(req, s, 'voucher', async (clientOpId) => {
+      const created = await db.$transaction(async (tx) => {
       const c = await tx.counter.upsert({
         where: { orgId_docKey: { orgId: s.orgId, docKey: type === 'RECEIPT' ? 'RCV' : 'PMT' } },
         create: { orgId: s.orgId, docKey: type === 'RECEIPT' ? 'RCV' : 'PMT', next: 2 },
@@ -162,7 +176,7 @@ export async function POST(req: NextRequest) {
             invoiceId,
             note: optStr(body.note),
             userId: s.id,
-            date: typeof body.date === 'string' && !isNaN(new Date(body.date).getTime()) ? new Date(body.date) : new Date(),
+            date: safeDate(body.date) ?? new Date(),
           },
         })
       } catch (e) {
@@ -178,20 +192,26 @@ export async function POST(req: NextRequest) {
       if (invoiceId) {
         // Compare-and-swap: re-read paidAmount inside the write transaction and only
         // apply when it is unchanged — concurrent payments retry instead of clobbering.
+        // OVERPAYMENT REJECTION: amount beyond the remaining due is a client bug or
+        // a race (another payment landed first) — reject with 409 instead of
+        // silently clamping money into the wrong bucket.
         for (let attempt = 0; ; attempt++) {
           const inv = await tx.invoice.findUnique({
             where: { id: invoiceId },
             select: { total: true, paidAmount: true },
           })
-          if (!inv) throw new Error('invoice-vanished')
-          const newPaid = round2(Math.min(inv.total, inv.paidAmount + amount))
+          if (!inv) throw new OperationConflictError('invoice-vanished')
+          if (round2(inv.paidAmount + amount) > round2(inv.total + 0.001)) {
+            throw new OperationConflictError('amount-exceeds-due')
+          }
+          const newPaid = round2(inv.paidAmount + amount)
           const status = newPaid <= 0 ? 'UNPAID' : newPaid >= inv.total ? 'PAID' : 'PARTIAL'
           const upd = await tx.invoice.updateMany({
             where: { id: invoiceId, paidAmount: inv.paidAmount },
             data: { paidAmount: newPaid, status },
           })
           if (upd.count === 1) break
-          if (attempt >= 4) throw new Error('paid-amount-conflict')
+          if (attempt >= 4) throw new OperationConflictError('paid-amount-conflict')
         }
       }
       return voucher
@@ -199,5 +219,12 @@ export async function POST(req: NextRequest) {
     return created
   })
 
+  // withIdempotency releases the claim when the handler throws — map typed
+  // conflicts to 409 (client can adjust and retry) instead of an opaque 500.
+  if (result instanceof Response) return result
   return okIdempotent(result)
+  } catch (e) {
+    if (e instanceof OperationConflictError) return bad(e.message, 409)
+    throw e
+  }
 }

@@ -1,5 +1,5 @@
 import { getSession, isStaff } from '@/lib/auth'
-import { ok, bad, str, optStr, money, round2, forbidden, unauthorized } from '@/lib/api-helpers'
+import { ok, bad, str, optStr, money, round2, forbidden, unauthorized, isFkViolation } from '@/lib/api-helpers'
 import { NextRequest } from 'next/server'
 import { db } from '@/lib/db'
 
@@ -67,14 +67,22 @@ export async function DELETE(req: NextRequest, ctx: { params: Promise<{ id: stri
   const { id } = await ctx.params
   const existing = await db.product.findFirst({
     where: { id, orgId: s.orgId },
-    include: { _count: { select: { items: true } } },
+    include: { _count: { select: { items: true, levels: true } } },
   })
   if (!existing) return bad('not-found', 404)
 
-  if (existing._count.items > 0) {
+  // Referenced by invoice items OR still holding stock levels → deactivate only.
+  if (existing._count.items > 0 || existing._count.levels > 0) {
     await db.product.updateMany({ where: { id, orgId: s.orgId }, data: { active: false } })
     return ok({ id, deactivated: true })
   }
-  await db.product.deleteMany({ where: { id, orgId: s.orgId } })
+  try {
+    await db.product.deleteMany({ where: { id, orgId: s.orgId } })
+  } catch (e) {
+    // Race: an invoice/stock row referencing the product landed between the
+    // count and the delete — keep the FK as the source of truth, return 409.
+    if (isFkViolation(e)) return bad('in-use', 409)
+    throw e
+  }
   return ok({ id, deactivated: false })
 }

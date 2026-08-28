@@ -148,7 +148,7 @@ model Product {
   items     InvoiceItem[]
   movements StockMovement[]
 
-  @@index([orgId, barcode])
+  @@unique([orgId, barcode])
   @@index([orgId, name])
 }
 

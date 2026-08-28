@@ -6,6 +6,18 @@ import { db } from '@/lib/db'
 import { createHash } from 'node:crypto'
 
 /**
+ * Thrown when an operation is valid per-field but conflicts with concurrent
+ * state (overpayment, paid-amount CAS exhaustion). Routes catch it OUTSIDE
+ * withIdempotency (which releases the claim on rethrow) and map it to 409/400.
+ */
+export class OperationConflictError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'OperationConflictError'
+  }
+}
+
+/**
  * Thrown INSIDE a stock transaction when an atomic negative-stock guard
  * (conditional `updateMany` with `qty: { gte }` in the WHERE) matched 0 rows.
  * The route catches it OUTSIDE the transaction (whose partial writes were
@@ -60,6 +72,32 @@ export function requireAdminRole(session: SessionUser): SessionUser | Response {
 
 /** Absolute sanity cap for any money amount (protects against 1e308-style abuse). */
 export const MAX_MONEY = 1_000_000_000
+
+/** Absolute sanity cap for any quantity (openings, invoice items, adjustments). */
+export const MAX_QTY = 1_000_000_000
+
+/**
+ * Signed quantity value clamped to [-MAX_QTY, MAX_QTY] — rejects non-finite
+ * input so absurd magnitudes (1e307) can never poison stock math downstream.
+ */
+export function qtyVal(v: unknown, fallback = 0): number {
+  const n = typeof v === 'number' ? v : parseFloat(String(v))
+  if (!Number.isFinite(n)) return fallback
+  return Math.min(MAX_QTY, Math.max(-MAX_QTY, n))
+}
+
+/**
+ * Parse a client-supplied date, rejecting values outside [2000-01-01, 2100-01-01].
+ * Out-of-range/unparseable input returns null (caller decides: reject or default).
+ * Prevents year-9999/1900 documents from poisoning period reports.
+ */
+export function safeDate(v: unknown): Date | null {
+  if (typeof v !== 'string' || !v) return null
+  const d = new Date(v)
+  if (isNaN(d.getTime())) return null
+  if (d.getTime() < Date.UTC(2000, 0, 1) || d.getTime() > Date.UTC(2100, 0, 1)) return null
+  return d
+}
 
 export function num(v: unknown, fallback = 0): number {
   const n = typeof v === 'number' ? v : parseFloat(String(v))
@@ -217,6 +255,15 @@ function extractId(value: unknown): string | null {
 }
 
 /**
+ * Detect a Prisma foreign-key constraint violation (P2003) — used by delete
+ * routes where a referencing row can land between the usage pre-check and the
+ * delete (the FK is the source of truth; the route maps it to 409).
+ */
+export function isFkViolation(e: unknown): boolean {
+  return (e as { code?: unknown })?.code === 'P2003'
+}
+
+/**
  * Detect a Prisma unique-constraint violation (optionally on a specific field).
  * Works for errors thrown inside or outside $transaction callbacks.
  */
@@ -227,6 +274,22 @@ export function isUniqueViolation(e: unknown, field?: string): boolean {
   const target = err.meta?.target
   if (Array.isArray(target)) return target.some((t) => String(t).includes(field))
   return String(target ?? '').includes(field)
+}
+
+// Opportunistic GC for the claim table: every Nth keyed call, purge claims
+// older than 90 days. Without this the table grows unboundedly (one row per
+// keyed mutation, forever). Deleting an unresolved claim is crash-safe — a
+// late retry re-runs the handler and the document-level @@unique dedupes.
+const CLAIM_GC_INTERVAL = 200
+const CLAIM_MAX_AGE_MS = 90 * 86_400_000
+let claimGcCounter = 0
+
+function maybeGcClaims() {
+  claimGcCounter++
+  if (claimGcCounter % CLAIM_GC_INTERVAL !== 0) return
+  void db.idempotencyKey
+    .deleteMany({ where: { createdAt: { lt: new Date(Date.now() - CLAIM_MAX_AGE_MS) } } })
+    .catch(() => undefined)
 }
 
 /**
@@ -256,6 +319,7 @@ export async function withIdempotency<T>(
   if (!IDEMPOTENCY_KEY_RE.test(rawKey)) return bad('invalid-idempotency-key', 400)
   // Identity = hash of the raw key — different raw keys can never collide.
   const clientOpId = clientOperationIdFor(scope, rawKey)
+  maybeGcClaims()
 
   let claim
   try {

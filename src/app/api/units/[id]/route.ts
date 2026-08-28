@@ -1,5 +1,5 @@
 import { getSession, isStaff } from '@/lib/auth'
-import { ok, bad, forbidden, unauthorized } from '@/lib/api-helpers'
+import { ok, bad, forbidden, unauthorized, isFkViolation } from '@/lib/api-helpers'
 import { NextRequest } from 'next/server'
 import { db } from '@/lib/db'
 
@@ -29,6 +29,13 @@ export async function DELETE(req: NextRequest, ctx: { params: Promise<{ id: stri
   const { id } = await ctx.params
   const row0 = await db.unit.findFirst({ where: { id, orgId: s.orgId } })
   if (!row0) return bad('not-found', 404)
-  await db.unit.deleteMany({ where: { id, orgId: s.orgId } })
+  try {
+    await db.unit.deleteMany({ where: { id, orgId: s.orgId } })
+  } catch (e) {
+    // Race: a product referencing the unit landed after the pre-read — the FK
+    // is the source of truth; map to 409 instead of a 500.
+    if (isFkViolation(e)) return bad('in-use', 409)
+    throw e
+  }
   return ok({ id })
 }

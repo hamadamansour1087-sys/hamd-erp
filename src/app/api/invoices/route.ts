@@ -9,6 +9,7 @@ import {
   unauthorized,
   forbidden,
   money,
+  MAX_QTY,
   withIdempotency,
   okIdempotent,
   isUniqueViolation,
@@ -180,6 +181,9 @@ export async function POST(req: NextRequest) {
     if (!product) continue
     const qty = num(it.qty, 0)
     if (qty <= 0) continue
+    // Sanity cap: a 1e307 qty would poison stock math (Infinity on sum) and
+    // every report downstream — reject the invoice instead of clamping money.
+    if (qty > MAX_QTY) return bad('qty-too-large')
     const defaultPrice = type === 'SALE' ? product.price : product.cost
     const price = it.price !== undefined && it.price !== null && num(it.price, 0) >= 0 ? num(it.price, 0) : defaultPrice
     const level = await db.stockLevel.findUnique({
