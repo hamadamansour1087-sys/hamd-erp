@@ -188,7 +188,14 @@ model StockMovement {
   note        String?
   userId      String?
   createdAt   DateTime @default(now())
+  // Crash-safe idempotency for stock adjustments: the scoped idempotency key
+  // is embedded INSIDE the movement, in the same transaction as the
+  // StockLevel write. Unique per org; NULL for non-adjustment movements
+  // (sales/purchases/transfers/openings). SQLite treats NULLs as distinct in
+  // a unique index, so those rows are unaffected.
+  clientOperationId String?
 
+  @@unique([orgId, clientOperationId])
   @@index([orgId, createdAt])
   @@index([productId])
 }

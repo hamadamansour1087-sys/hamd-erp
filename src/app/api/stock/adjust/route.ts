@@ -36,10 +36,54 @@ async function withStockLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
   }
 }
 
+type AdjustOutcome = {
+  id: string
+  changed: boolean
+  alreadyApplied: boolean
+  oldQty: number
+  newQty: number
+}
+
+/** Resolve the committed state of an already-applied adjustment (crash recovery). */
+async function committedOutcome(
+  orgId: string,
+  productId: string,
+  warehouseId: string,
+  clientOpId: string
+): Promise<AdjustOutcome | null> {
+  const movement = await db.stockMovement.findUnique({
+    where: { orgId_clientOperationId: { orgId, clientOperationId: clientOpId } },
+    select: { id: true, qty: true },
+  })
+  if (!movement) return null
+  const level = await db.stockLevel.findUnique({
+    where: { productId_warehouseId: { productId, warehouseId } },
+    select: { qty: true },
+  })
+  const cur = level?.qty ?? 0
+  return {
+    id: movement.id,
+    changed: true,
+    alreadyApplied: true,
+    oldQty: round2(cur - movement.qty),
+    newQty: cur,
+  }
+}
+
 /**
  * POST /api/stock/adjust — physical count correction (staff only).
  * body { warehouseId, productId, newQty, reason? }
  * Records an ADJUST_IN / ADJUST_OUT ledger movement with the delta.
+ *
+ * CRASH-SAFE IDEMPOTENCY (same level as Invoice/Voucher/Transfer): when the
+ * client sends an `Idempotency-Key`, the scoped key is embedded as
+ * `clientOperationId` ON the StockMovement, inside the SAME transaction that
+ * writes StockLevel (@@unique([orgId, clientOperationId])). If the server
+ * crashes after the COMMIT but before IdempotencyKey.resultId is recorded,
+ * the retry finds the committed movement and returns it untouched — a second
+ * StockMovement, a second StockLevel change, or a re-applied absolute set
+ * (which could silently revert a legitimate later adjustment) are all
+ * impossible in every interleaving.
  */
 export async function POST(req: NextRequest) {
   const s = await getSession(req)
@@ -62,76 +106,120 @@ export async function POST(req: NextRequest) {
   if (!Number.isFinite(newQty) || newQty < 0) return bad('qty-invalid')
   const reason = optStr(body.reason)
 
-  const result = await withIdempotency(req, s, 'stock-adjust', async () => {
-  const adjusted = await withStockLock(`${productId}:${warehouseId}`, () => db.$transaction(async (tx) => {
-    // CONCURRENCY: compare-and-swap (CAS) retry loop. The delta is computed from
-    // a qty that is re-read INSIDE the write transaction, and the absolute set is
-    // applied only while the row still holds that observed qty (`qty: oldQty` in
-    // the WHERE). A concurrent adjustment between read and write makes the CAS
-    // match 0 rows → retry recomputes from the fresh value. This makes a lost
-    // update impossible: StockLevel.qty can never diverge from the sum of
-    // StockMovement deltas produced here.
-    for (let attempt = 0; ; attempt++) {
-      const existing = await tx.stockLevel.findUnique({
-        where: { productId_warehouseId: { productId, warehouseId } },
-        select: { qty: true },
-      })
-      const oldQty = existing?.qty ?? 0
-      const delta = round2(newQty - oldQty)
-      if (delta === 0) {
-        return { changed: false as const, oldQty, newQty }
-      }
-      if (existing) {
-        const cas = await tx.stockLevel.updateMany({
-          where: { productId, warehouseId, qty: oldQty },
-          data: { qty: newQty },
-        })
-        if (cas.count === 1) {
-          await tx.stockMovement.create({
-            data: {
-              orgId: s.orgId,
-              productId,
-              warehouseId,
-              qty: delta,
-              kind: delta > 0 ? 'ADJUST_IN' : 'ADJUST_OUT',
-              refType: 'ADJUSTMENT',
-              refId: null,
-              note: reason ?? `تسوية جرد من ${oldQty} إلى ${newQty} (${product.name})`,
-              userId: s.id,
-            },
+  const result = await withIdempotency(req, s, 'stock-adjust', async (clientOpId) => {
+  const adjusted = await withStockLock(`${productId}:${warehouseId}`, async (): Promise<AdjustOutcome> => {
+    try {
+      return await db.$transaction(async (tx) => {
+        // CRASH-WINDOW DEDUPE (pre-check): if a previous attempt of THIS
+        // logical operation already committed its movement, it is already
+        // applied — return it without touching StockLevel, even if other
+        // adjustments legitimately moved the level after the crash.
+        if (clientOpId) {
+          const movement = await tx.stockMovement.findUnique({
+            where: { orgId_clientOperationId: { orgId: s.orgId, clientOperationId: clientOpId } },
+            select: { id: true, qty: true },
           })
-          return { changed: true as const, oldQty, newQty }
+          if (movement) {
+            const level = await tx.stockLevel.findUnique({
+              where: { productId_warehouseId: { productId, warehouseId } },
+              select: { qty: true },
+            })
+            const cur = level?.qty ?? 0
+            return {
+              id: movement.id,
+              changed: true,
+              alreadyApplied: true,
+              oldQty: round2(cur - movement.qty),
+              newQty: cur,
+            }
+          }
         }
-      } else {
-        // Row does not exist yet — create it; a concurrent creator would violate
-        // the (productId, warehouseId) unique constraint → retry re-reads.
-        try {
-          await tx.stockLevel.create({ data: { productId, warehouseId, qty: newQty } })
-        } catch (e) {
-          if (isUniqueViolation(e) && attempt < 5) continue
-          throw e
+        // CONCURRENCY: compare-and-swap (CAS) retry loop. The delta is computed from
+        // a qty that is re-read INSIDE the write transaction, and the absolute set is
+        // applied only while the row still holds that observed qty (`qty: oldQty` in
+        // the WHERE). A concurrent adjustment between read and write makes the CAS
+        // match 0 rows → retry recomputes from the fresh value. This makes a lost
+        // update impossible: StockLevel.qty can never diverge from the sum of
+        // StockMovement deltas produced here.
+        for (let attempt = 0; ; attempt++) {
+          const existing = await tx.stockLevel.findUnique({
+            where: { productId_warehouseId: { productId, warehouseId } },
+            select: { qty: true },
+          })
+          const oldQty = existing?.qty ?? 0
+          const delta = round2(newQty - oldQty)
+          if (delta === 0) {
+            // Genuine no-op (nothing was ever applied for this key): the
+            // synthetic id is safe here — there is no document to duplicate.
+            return { id: `adjust:${productId}:${warehouseId}`, changed: false, alreadyApplied: false, oldQty, newQty }
+          }
+          if (existing) {
+            const cas = await tx.stockLevel.updateMany({
+              where: { productId, warehouseId, qty: oldQty },
+              data: { qty: newQty },
+            })
+            if (cas.count === 1) {
+              const movement = await tx.stockMovement.create({
+                data: {
+                  orgId: s.orgId,
+                  productId,
+                  warehouseId,
+                  qty: delta,
+                  kind: delta > 0 ? 'ADJUST_IN' : 'ADJUST_OUT',
+                  refType: 'ADJUSTMENT',
+                  refId: null,
+                  note: reason ?? `تسوية جرد من ${oldQty} إلى ${newQty} (${product.name})`,
+                  userId: s.id,
+                  // CRASH-WINDOW ANCHOR: committed atomically with the
+                  // StockLevel write above; @@unique([orgId, clientOperationId])
+                  // makes a duplicate operation impossible.
+                  clientOperationId: clientOpId,
+                },
+                select: { id: true },
+              })
+              return { id: movement.id, changed: true, alreadyApplied: false, oldQty, newQty }
+            }
+          } else {
+            // Row does not exist yet — create it; a concurrent creator would violate
+            // the (productId, warehouseId) unique constraint → retry re-reads.
+            try {
+              await tx.stockLevel.create({ data: { productId, warehouseId, qty: newQty } })
+            } catch (e) {
+              if (isUniqueViolation(e) && attempt < 5) continue
+              throw e
+            }
+            const movement = await tx.stockMovement.create({
+              data: {
+                orgId: s.orgId,
+                productId,
+                warehouseId,
+                qty: delta,
+                kind: 'ADJUST_IN',
+                refType: 'ADJUSTMENT',
+                refId: null,
+                note: reason ?? `تسوية جرد من ${oldQty} إلى ${newQty} (${product.name})`,
+                userId: s.id,
+                clientOperationId: clientOpId,
+              },
+              select: { id: true },
+            })
+            return { id: movement.id, changed: true, alreadyApplied: false, oldQty, newQty }
+          }
+          if (attempt >= 5) throw new Error('stock-qty-conflict')
         }
-        await tx.stockMovement.create({
-          data: {
-            orgId: s.orgId,
-            productId,
-            warehouseId,
-            qty: delta,
-            kind: 'ADJUST_IN',
-            refType: 'ADJUSTMENT',
-            refId: null,
-            note: reason ?? `تسوية جرد من ${oldQty} إلى ${newQty} (${product.name})`,
-            userId: s.id,
-          },
-        })
-        return { changed: true as const, oldQty, newQty }
+      })
+    } catch (e) {
+      // BACKSTOP: a concurrent same-key attempt committed its movement between
+      // our pre-check and ours. This transaction (including its StockLevel
+      // write) has been rolled back — resolve to the committed movement.
+      if (clientOpId && isUniqueViolation(e, 'clientOperationId')) {
+        const outcome = await committedOutcome(s.orgId, productId, warehouseId, clientOpId)
+        if (outcome) return outcome
       }
-      if (attempt >= 5) throw new Error('stock-qty-conflict')
+      throw e
     }
-    })
-  )
-  // Synthetic id so idempotent replays resolve to this operation.
-  return { id: `adjust:${productId}:${warehouseId}`, ...adjusted, productId, warehouseId }
+  })
+  return adjusted
   })
 
   return okIdempotent(result)

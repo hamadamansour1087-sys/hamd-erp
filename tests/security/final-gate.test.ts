@@ -15,6 +15,10 @@
  *  - P0-07: idempotency crash window — a retry after a simulated post-COMMIT
  *    crash (claim recorded, resultId missing, document committed) returns the
  *    committed document and never creates a second one
+ *  - STOCK-1: crash-safe stock adjustment idempotency — the scoped key is
+ *    anchored on StockMovement (@@unique([orgId, clientOperationId])) inside
+ *    the same transaction as the StockLevel write; replays/crash-retries
+ *    never create a second movement or a second level change
  *
  * Run: bun test tests/security
  */
@@ -578,5 +582,221 @@ describe('Gate sanity — invoices still number uniquely after gate changes', ()
     expect(a.status).toBe(200)
     expect(b.status).toBe(200)
     expect(a.json.data.invoice.number).not.toBe(b.json.data.invoice.number)
+  })
+})
+
+// ─────────── STOCK-1: crash-safe stock adjustment idempotency ───────────
+// The scoped Idempotency-Key must be anchored ON the StockMovement itself
+// (@@unique([orgId, clientOperationId])) inside the same transaction as the
+// StockLevel write — the synthetic `adjust:<product>:<warehouse>` id and the
+// IdempotencyKey claim alone cannot protect the crash window
+// (COMMIT → crash → resultId lost → retry).
+
+describe('STOCK-1 — crash-safe stock adjustment idempotency', () => {
+  test('1. same user + same key → one adjustment, one movement', async () => {
+    const prod = await db.product.create({ data: { orgId: orgG.id, name: 'Idem Prod 1', price: 10, cost: 5, trackStock: true } })
+    const key = 'stock-idem-same-1'
+    const scoped = `stock-adjust:${key}`
+
+    const r1 = await json(await adjustRoute.POST(makeReq('/api/stock/adjust', {
+      method: 'POST', session: adminSess(),
+      headers: { 'Idempotency-Key': key },
+      body: { warehouseId: whG.id, productId: prod.id, newQty: 25, reason: 'first' },
+    })))
+    expect(r1.status).toBe(200)
+    expect(r1.json.data.duplicate).toBe(false)
+    expect(r1.json.data.changed).toBe(true)
+    const movementId = r1.json.data.id
+    // the response id is a REAL StockMovement id (not the synthetic fallback)
+    expect(movementId).not.toBe(`adjust:${prod.id}:${whG.id}`)
+    // the key is anchored on the movement inside the transaction
+    const mv = await db.stockMovement.findUnique({ where: { id: movementId } })
+    expect(mv?.clientOperationId).toBe(scoped)
+
+    const r2 = await json(await adjustRoute.POST(makeReq('/api/stock/adjust', {
+      method: 'POST', session: adminSess(),
+      headers: { 'Idempotency-Key': key },
+      body: { warehouseId: whG.id, productId: prod.id, newQty: 25, reason: 'replay' },
+    })))
+    expect(r2.status).toBe(200)
+    expect(r2.json.data.duplicate).toBe(true)
+    expect(r2.json.data.id).toBe(movementId)
+
+    // exactly ONE movement for this operation; level unaffected by the replay
+    expect(await db.stockMovement.count({ where: { orgId: orgG.id, clientOperationId: scoped } })).toBe(1)
+    const level = await db.stockLevel.findUnique({ where: { productId_warehouseId: { productId: prod.id, warehouseId: whG.id } } })
+    expect(level?.qty).toBe(25)
+    expect(await db.stockMovement.count({ where: { productId: prod.id, warehouseId: whG.id } })).toBe(1)
+  })
+
+  test('2. retry after simulated post-COMMIT crash → one adjustment, one movement, same final stock', async () => {
+    const prod = await db.product.create({ data: { orgId: orgG.id, name: 'Idem Prod 2', price: 10, cost: 5, trackStock: true } })
+    const key = 'stock-idem-crash-1'
+    const scoped = `stock-adjust:${key}`
+
+    const r1 = await json(await adjustRoute.POST(makeReq('/api/stock/adjust', {
+      method: 'POST', session: adminSess(),
+      headers: { 'Idempotency-Key': key },
+      body: { warehouseId: whG.id, productId: prod.id, newQty: 30 },
+    })))
+    expect(r1.status).toBe(200)
+    const movementId = r1.json.data.id
+
+    // SIMULATE THE CRASH WINDOW: the transaction COMMITTED (level=30, movement
+    // written with the anchor), but the server died before IdempotencyKey
+    // resultId was recorded and the client never received the response.
+    await db.idempotencyKey.updateMany({ where: { orgId: orgG.id, key: scoped }, data: { resultId: null } })
+    const committed = await db.stockMovement.findUnique({ where: { id: movementId } })
+    expect(committed?.clientOperationId).toBe(scoped) // anchor survived the crash
+
+    // the client retries the exact same request
+    const r2 = await json(await adjustRoute.POST(makeReq('/api/stock/adjust', {
+      method: 'POST', session: adminSess(),
+      headers: { 'Idempotency-Key': key },
+      body: { warehouseId: whG.id, productId: prod.id, newQty: 30 },
+    })))
+    expect(r2.status).toBe(200)
+    expect(r2.json.data.duplicate).toBe(true)
+    expect(r2.json.data.id).toBe(movementId) // resolves to the committed movement
+
+    // NO second movement, NO second StockLevel change
+    expect(await db.stockMovement.count({ where: { orgId: orgG.id, clientOperationId: scoped } })).toBe(1)
+    expect(await db.stockMovement.count({ where: { productId: prod.id, warehouseId: whG.id } })).toBe(1)
+    const level = await db.stockLevel.findUnique({ where: { productId_warehouseId: { productId: prod.id, warehouseId: whG.id } } })
+    expect(level?.qty).toBe(30)
+  })
+
+  test('2b. crash + an intervening adjustment → retry must NOT re-apply the original', async () => {
+    const prod = await db.product.create({ data: { orgId: orgG.id, name: 'Idem Prod 2b', price: 10, cost: 5, trackStock: true } })
+    const key = 'stock-idem-crash-2'
+    const scoped = `stock-adjust:${key}`
+
+    // original adjustment 0 → 30, then the "crash" (resultId lost)
+    const r1 = await json(await adjustRoute.POST(makeReq('/api/stock/adjust', {
+      method: 'POST', session: adminSess(),
+      headers: { 'Idempotency-Key': key },
+      body: { warehouseId: whG.id, productId: prod.id, newQty: 30 },
+    })))
+    expect(r1.status).toBe(200)
+    const movementId = r1.json.data.id
+    await db.idempotencyKey.updateMany({ where: { orgId: orgG.id, key: scoped }, data: { resultId: null } })
+
+    // BEFORE the retry, another (legitimate, keyless) adjustment moves 30 → 50
+    const other = await json(await adjustRoute.POST(makeReq('/api/stock/adjust', {
+      method: 'POST', session: managerSess(),
+      body: { warehouseId: whG.id, productId: prod.id, newQty: 50, reason: 'later count' },
+    })))
+    expect(other.status).toBe(200)
+
+    // the stale retry (still asking for 30) must NOT re-apply the old
+    // operation: no extra movement, level stays at 50
+    const r2 = await json(await adjustRoute.POST(makeReq('/api/stock/adjust', {
+      method: 'POST', session: adminSess(),
+      headers: { 'Idempotency-Key': key },
+      body: { warehouseId: whG.id, productId: prod.id, newQty: 30 },
+    })))
+    expect(r2.status).toBe(200)
+    expect(r2.json.data.id).toBe(movementId)
+    expect(await db.stockMovement.count({ where: { orgId: orgG.id, clientOperationId: scoped } })).toBe(1)
+
+    const level = await db.stockLevel.findUnique({ where: { productId_warehouseId: { productId: prod.id, warehouseId: whG.id } } })
+    expect(level?.qty).toBe(50)
+    const movements = await db.stockMovement.findMany({ where: { productId: prod.id, warehouseId: whG.id } })
+    expect(movements.length).toBe(2) // +30 (original) and +20 (later count) — nothing else
+    const ledgerSum = movements.reduce((s, m) => s + m.qty, 0)
+    expect(ledgerSum).toBe(50)
+  })
+
+  test('3. different user + same key → 403, no duplicate operation', async () => {
+    const prod = await db.product.create({ data: { orgId: orgG.id, name: 'Idem Prod 3', price: 10, cost: 5, trackStock: true } })
+    const key = 'stock-idem-owner-1'
+
+    const r1 = await json(await adjustRoute.POST(makeReq('/api/stock/adjust', {
+      method: 'POST', session: adminSess(),
+      headers: { 'Idempotency-Key': key },
+      body: { warehouseId: whG.id, productId: prod.id, newQty: 10 },
+    })))
+    expect(r1.status).toBe(200)
+
+    // another user in the SAME org replays the key → must be rejected
+    const r2 = await json(await adjustRoute.POST(makeReq('/api/stock/adjust', {
+      method: 'POST', session: managerSess(),
+      headers: { 'Idempotency-Key': key },
+      body: { warehouseId: whG.id, productId: prod.id, newQty: 999 },
+    })))
+    expect(r2.status).toBe(403)
+
+    // exactly one movement, level untouched by the rejected replay
+    expect(await db.stockMovement.count({ where: { productId: prod.id, warehouseId: whG.id } })).toBe(1)
+    const level = await db.stockLevel.findUnique({ where: { productId_warehouseId: { productId: prod.id, warehouseId: whG.id } } })
+    expect(level?.qty).toBe(10)
+  })
+
+  test('4. different organization + same key → independent operation', async () => {
+    const key = 'stock-idem-shared-org'
+    const scoped = `stock-adjust:${key}`
+
+    const org2 = await db.org.create({ data: { name: 'Gate Org B' } })
+    const admin2 = await db.user.create({
+      data: { orgId: org2.id, email: 'admin-b@gate.test', name: 'Gate Admin B', passwordHash: auth.hashPassword('gate-pass-123'), role: 'ADMIN' },
+    })
+    const wh2 = await db.warehouse.create({ data: { orgId: org2.id, name: 'Gate-WH-B', isDefault: true } })
+    const prod2 = await db.product.create({ data: { orgId: org2.id, name: 'Idem Prod B', price: 10, cost: 5, trackStock: true } })
+    const prod1 = await db.product.create({ data: { orgId: orgG.id, name: 'Idem Prod A', price: 10, cost: 5, trackStock: true } })
+    const org2Sess = { id: admin2.id, orgId: org2.id, role: 'ADMIN' } as Sess
+
+    const r1 = await json(await adjustRoute.POST(makeReq('/api/stock/adjust', {
+      method: 'POST', session: adminSess(),
+      headers: { 'Idempotency-Key': key },
+      body: { warehouseId: whG.id, productId: prod1.id, newQty: 7 },
+    })))
+    const r2 = await json(await adjustRoute.POST(makeReq('/api/stock/adjust', {
+      method: 'POST', session: org2Sess,
+      headers: { 'Idempotency-Key': key },
+      body: { warehouseId: wh2.id, productId: prod2.id, newQty: 70 },
+    })))
+    expect(r1.status).toBe(200)
+    expect(r2.status).toBe(200)
+    expect(r1.json.data.duplicate).toBe(false)
+    expect(r2.json.data.duplicate).toBe(false)
+
+    // each org executed the operation exactly once, independently
+    expect(await db.stockMovement.count({ where: { orgId: orgG.id, clientOperationId: scoped } })).toBe(1)
+    expect(await db.stockMovement.count({ where: { orgId: org2.id, clientOperationId: scoped } })).toBe(1)
+    const l1 = await db.stockLevel.findUnique({ where: { productId_warehouseId: { productId: prod1.id, warehouseId: whG.id } } })
+    const l2 = await db.stockLevel.findUnique({ where: { productId_warehouseId: { productId: prod2.id, warehouseId: wh2.id } } })
+    expect(l1?.qty).toBe(7)
+    expect(l2?.qty).toBe(70)
+  })
+
+  test('5. concurrent adjustments (Promise.all) — StockLevel == ledger sum, concurrent same-key creates ONE movement', async () => {
+    const prod = await db.product.create({ data: { orgId: orgG.id, name: 'Idem Prod 5', price: 10, cost: 5, trackStock: true } })
+
+    // 5a. three different concurrent adjustments → ledger invariant holds
+    await Promise.all([
+      adjustRoute.POST(makeReq('/api/stock/adjust', { method: 'POST', session: adminSess(), body: { warehouseId: whG.id, productId: prod.id, newQty: 100 } })),
+      adjustRoute.POST(makeReq('/api/stock/adjust', { method: 'POST', session: managerSess(), body: { warehouseId: whG.id, productId: prod.id, newQty: 45 } })),
+      adjustRoute.POST(makeReq('/api/stock/adjust', { method: 'POST', session: adminSess(), body: { warehouseId: whG.id, productId: prod.id, newQty: 60 } })),
+    ])
+    const level = await db.stockLevel.findUnique({ where: { productId_warehouseId: { productId: prod.id, warehouseId: whG.id } } })
+    const movements = await db.stockMovement.findMany({ where: { productId: prod.id, warehouseId: whG.id } })
+    const ledgerSum = movements.reduce((s, m) => s + m.qty, 0)
+    expect(level!.qty).toBe(ledgerSum) // ledger can never diverge from qty
+    expect([100, 45, 60]).toContain(level?.qty)
+
+    // 5b. two CONCURRENT requests with the SAME key → exactly one movement
+    const prod2 = await db.product.create({ data: { orgId: orgG.id, name: 'Idem Prod 5b', price: 10, cost: 5, trackStock: true } })
+    const key = 'stock-idem-race-1'
+    const [c, d] = await Promise.all([
+      adjustRoute.POST(makeReq('/api/stock/adjust', { method: 'POST', session: adminSess(), headers: { 'Idempotency-Key': key }, body: { warehouseId: whG.id, productId: prod2.id, newQty: 33 } })),
+      adjustRoute.POST(makeReq('/api/stock/adjust', { method: 'POST', session: adminSess(), headers: { 'Idempotency-Key': key }, body: { warehouseId: whG.id, productId: prod2.id, newQty: 33 } })),
+    ])
+    expect(c.status).toBe(200)
+    expect(d.status).toBe(200)
+    const raceMovements = await db.stockMovement.findMany({ where: { orgId: orgG.id, clientOperationId: `stock-adjust:${key}` } })
+    expect(raceMovements.length).toBe(1)
+    const level2 = await db.stockLevel.findUnique({ where: { productId_warehouseId: { productId: prod2.id, warehouseId: whG.id } } })
+    expect(level2?.qty).toBe(33)
+    expect(await db.stockMovement.count({ where: { productId: prod2.id, warehouseId: whG.id } })).toBe(1)
   })
 })
