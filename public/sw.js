@@ -11,7 +11,7 @@
  * - API GETs: network-first, only 2xx cached, fallback to last good data.
  * - Mutating methods: always passthrough (offline mutations handled by JS queue).
  */
-const VERSION = 'tijara-v3'
+const VERSION = 'tijara-v4'
 const SHELL_CACHE = `${VERSION}-shell`
 const ASSET_CACHE = `${VERSION}-assets`
 const DATA_CACHE = `${VERSION}-data`

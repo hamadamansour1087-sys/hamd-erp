@@ -1,4 +1,4 @@
-// Module dictionary for 'dashboard' (لوحة التحكم) — owned exclusively by Task 5-a.
+// Module dictionary for 'dashboard' (H.A.M.D — نظام متكامل لنقاط البيع والمخازن والفواتير) — owned exclusively by Task 5-a.
 import type { LangDict } from '../root-dict'
 
 export const dashboardDict: LangDict = {
@@ -52,7 +52,7 @@ export const dashboardDict: LangDict = {
     'dash.qkReceipt': 'Receipt voucher',
 
     // ---------- States ----------
-    'dash.loadFail': 'Could not load the dashboard data',
+    'dash.loadFail': 'Could not load H.A.M.D data',
   },
   ar: {
     // ---------- ترويسة الترحيب ----------
@@ -104,6 +104,6 @@ export const dashboardDict: LangDict = {
     'dash.qkReceipt': 'سند قبض',
 
     // ---------- الحالات ----------
-    'dash.loadFail': 'تعذّر تحميل بيانات لوحة التحكم',
+    'dash.loadFail': 'تعذّر تحميل بيانات H.A.M.D',
   },
 }

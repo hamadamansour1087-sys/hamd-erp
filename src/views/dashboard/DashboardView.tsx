@@ -1,7 +1,7 @@
 'use client'
 
 /**
- * DashboardView — لوحة التحكم (Task 5-a owned file).
+ * DashboardView — H.A.M.D home dashboard (Task 5-a owned file).
  * KPI grid + sales/profit area chart with range toggle +
  * best-sellers & stock-shortage side panels + quick actions strip.
  * Read-only for every role (CASHIER included); all strings via dash.* dict.

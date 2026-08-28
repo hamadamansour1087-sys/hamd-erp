@@ -526,7 +526,7 @@ function Hero({ onAuth }: { onAuth: () => void }) {
           </div>
           <img
             src="/landing/app-dashboard.png"
-            alt="لقطة شاشة من لوحة تحكم نظام H.A.M.D تعرض المبيعات والمخزون والتقارير"
+            alt="لقطة شاشة من نظام H.A.M.D تعرض المبيعات والمخزون والتقارير"
             className="block h-auto w-full bg-muted"
             width={1280}
             height={720}
