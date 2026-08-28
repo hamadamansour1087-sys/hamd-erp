@@ -60,12 +60,12 @@ async function committedOutcome(
     where: { productId_warehouseId: { productId, warehouseId } },
     select: { qty: true },
   })
-  const cur = level?.qty ?? 0
+  const cur = Number(level?.qty ?? 0)
   return {
     id: movement.id,
     changed: true,
     alreadyApplied: true,
-    oldQty: round2(cur - movement.qty),
+    oldQty: round2(cur - Number(movement.qty)),
     newQty: cur,
   }
 }
@@ -108,7 +108,9 @@ export async function POST(req: NextRequest) {
 
   const result = await withIdempotency(req, s, 'stock-adjust', async (clientOpId) => {
   const adjusted = await withStockLock(`${productId}:${warehouseId}`, async (): Promise<AdjustOutcome> => {
-    try {
+    let lastError: unknown
+    for (let txTry = 0; txTry < 3; txTry++) {
+      try {
       return await db.$transaction(async (tx) => {
         // CRASH-WINDOW DEDUPE (pre-check): if a previous attempt of THIS
         // logical operation already committed its movement, it is already
@@ -124,12 +126,12 @@ export async function POST(req: NextRequest) {
               where: { productId_warehouseId: { productId, warehouseId } },
               select: { qty: true },
             })
-            const cur = level?.qty ?? 0
+            const cur = Number(level?.qty ?? 0)
             return {
               id: movement.id,
               changed: true,
               alreadyApplied: true,
-              oldQty: round2(cur - movement.qty),
+              oldQty: round2(cur - Number(movement.qty)),
               newQty: cur,
             }
           }
@@ -146,7 +148,7 @@ export async function POST(req: NextRequest) {
             where: { productId_warehouseId: { productId, warehouseId } },
             select: { qty: true },
           })
-          const oldQty = existing?.qty ?? 0
+          const oldQty = Number(existing?.qty ?? 0)
           const delta = round2(newQty - oldQty)
           if (delta === 0) {
             // Genuine no-op (nothing was ever applied for this key): the
@@ -182,12 +184,7 @@ export async function POST(req: NextRequest) {
           } else {
             // Row does not exist yet — create it; a concurrent creator would violate
             // the (productId, warehouseId) unique constraint → retry re-reads.
-            try {
-              await tx.stockLevel.create({ data: { productId, warehouseId, qty: newQty } })
-            } catch (e) {
-              if (isUniqueViolation(e) && attempt < 5) continue
-              throw e
-            }
+            await tx.stockLevel.create({ data: { productId, warehouseId, qty: newQty } })
             const movement = await tx.stockMovement.create({
               data: {
                 orgId: s.orgId,
@@ -208,16 +205,21 @@ export async function POST(req: NextRequest) {
           if (attempt >= 5) throw new Error('stock-qty-conflict')
         }
       })
-    } catch (e) {
-      // BACKSTOP: a concurrent same-key attempt committed its movement between
-      // our pre-check and ours. This transaction (including its StockLevel
-      // write) has been rolled back — resolve to the committed movement.
-      if (clientOpId && isUniqueViolation(e, 'clientOperationId')) {
-        const outcome = await committedOutcome(s.orgId, productId, warehouseId, clientOpId)
-        if (outcome) return outcome
+      } catch (e) {
+        lastError = e
+        // BACKSTOP (PostgreSQL-safe): the tx (including its StockLevel write)
+        // has been rolled back — a P2002 aborts a PostgreSQL transaction, so
+        // in-transaction retries are impossible; retries happen HERE with
+        // fresh reads (CAS recomputes the delta).
+        if (clientOpId && isUniqueViolation(e, 'clientOperationId')) {
+          const outcome = await committedOutcome(s.orgId, productId, warehouseId, clientOpId)
+          if (outcome) return outcome
+        }
+        if (isUniqueViolation(e) && txTry < 2) continue
+        throw e
       }
-      throw e
     }
+    throw lastError
   })
   return adjusted
   })

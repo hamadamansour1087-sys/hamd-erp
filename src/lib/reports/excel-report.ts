@@ -139,17 +139,17 @@ async function collect(orgId: string, kind: ReportKind, days: number, lang: Exce
   for (const inv of salesInv) {
     const b = buckets.get(keyFmt.format(new Date(inv.date)))
     if (!b) continue
-    b.sales += inv.total
-    b.profit += inv.total - inv.taxAmount - inv.costTotal
+    b.sales += Number(inv.total)
+    b.profit += Number(inv.total) - Number(inv.taxAmount) - Number(inv.costTotal)
     b.count++
   }
   for (const inv of purInv) {
     const b = buckets.get(keyFmt.format(new Date(inv.date)))
-    if (b) b.purchases += inv.total
+    if (b) b.purchases += Number(inv.total)
   }
   for (const ex of expenses) {
     const b = buckets.get(keyFmt.format(new Date(ex.date)))
-    if (b) b.exp += ex.amount
+    if (b) b.exp += Number(ex.amount)
   }
 
   const sorted = Array.from(buckets.keys()).sort()
@@ -186,15 +186,15 @@ async function collect(orgId: string, kind: ReportKind, days: number, lang: Exce
       widths: [6, 36, 14, 16, 10],
       types: ['qty', 'text', 'qty', 'money', 'pct'],
       rows: topItems.map((x, i) => {
-        const rev = round2(x._sum.total ?? 0)
-        return [i + 1, pmap.get(x.productId)?.name ?? '-', x._sum.qty ?? 0, rev, pctOf(rev, salesTotal)]
+        const rev = round2(Number(x._sum.total ?? 0))
+        return [i + 1, pmap.get(x.productId)?.name ?? '-', Number(x._sum.qty ?? 0), rev, pctOf(rev, salesTotal)]
       }),
     }
     const catTotals = new Map<string, number>()
     for (const it of rangeItems) {
       const p = prods.find((x) => x.id === it.productId)
       const key = p?.categoryId ?? '__none__'
-      catTotals.set(key, (catTotals.get(key) ?? 0) + it.total)
+      catTotals.set(key, (catTotals.get(key) ?? 0) + Number(it.total))
     }
     const categoriesTable: ExcelTable = {
       headers: [t('التصنيف', 'Category'), t('الإيراد', 'Revenue'), t('الحصة', 'Share')],
@@ -236,7 +236,7 @@ async function collect(orgId: string, kind: ReportKind, days: number, lang: Exce
       widths: [6, 36, 16, 10],
       types: ['qty', 'text', 'money', 'pct'],
       rows: custAgg.map((c, i) => {
-        const v = round2(c._sum.total ?? 0)
+        const v = round2(Number(c._sum.total ?? 0))
         return [i + 1, (c.customerId && cmap.get(c.customerId)) || t('عميل نقدي', 'Walk-in customer'), v, pctOf(v, salesTotal)]
       }),
     }

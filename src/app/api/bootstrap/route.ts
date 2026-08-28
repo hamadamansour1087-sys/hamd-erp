@@ -66,7 +66,7 @@ export async function GET(req: NextRequest) {
     notes: p.notes,
     active: p.active,
     levels: p.levels,
-    stock: p.levels.reduce((sum, l) => sum + l.qty, 0),
+    stock: p.levels.reduce((sum, l) => sum + Number(l.qty), 0),
   }))
 
   void 0

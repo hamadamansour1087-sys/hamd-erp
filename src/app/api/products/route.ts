@@ -44,7 +44,7 @@ export async function GET(req: NextRequest) {
             categoryName: exact.category?.name ?? null,
             unitName: exact.unit?.name ?? null,
             unitShort: exact.unit?.shortName ?? null,
-            stock: exact.levels.reduce((sum, l) => sum + l.qty, 0),
+            stock: exact.levels.reduce((sum, l) => sum + Number(l.qty), 0),
           },
         ],
       })
@@ -84,7 +84,7 @@ export async function GET(req: NextRequest) {
       categoryName: p.category?.name ?? null,
       unitName: p.unit?.name ?? null,
       unitShort: p.unit?.shortName ?? null,
-      stock: p.levels.reduce((sum, l) => sum + l.qty, 0),
+      stock: p.levels.reduce((sum, l) => sum + Number(l.qty), 0),
     })),
   })
 }

@@ -24,10 +24,11 @@ export async function aggregateSales(orgId: string, from: Date, to?: Date, type:
   let gross = 0
   let cost = 0
   for (const r of rows) {
-    const net = r.total - r.taxAmount
+    // DECIMAL(14,2) reads → number at the boundary; math stays in number domain.
+    const net = Number(r.total) - Number(r.taxAmount)
     revenue += net
-    gross += r.total
-    cost += r.costTotal
+    gross += Number(r.total)
+    cost += Number(r.costTotal)
   }
   return {
     revenue: round2(revenue),
@@ -42,7 +43,7 @@ export async function aggregateExpenses(orgId: string, from: Date): Promise<numb
     where: { orgId, date: { gte: from } },
     _sum: { amount: true },
   })
-  return round2(agg._sum.amount ?? 0)
+  return round2(Number(agg._sum.amount ?? 0))
 }
 
 /** Net cash in hand: receipts − payments − expenses (all-time, cancelled invoices' vouchers still count). */
@@ -52,9 +53,9 @@ export async function cashInHand(orgId: string): Promise<{ receipts: number; pay
     db.voucher.aggregate({ where: { orgId, type: 'PAYMENT' }, _sum: { amount: true } }),
     db.expense.aggregate({ where: { orgId }, _sum: { amount: true } }),
   ])
-  const receipts = round2(rec._sum.amount ?? 0)
-  const payments = round2(pay._sum.amount ?? 0)
-  const expenses = round2(exp._sum.amount ?? 0)
+  const receipts = round2(Number(rec._sum.amount ?? 0))
+  const payments = round2(Number(pay._sum.amount ?? 0))
+  const expenses = round2(Number(exp._sum.amount ?? 0))
   return { receipts, payments, expenses, net: round2(receipts - payments - expenses) }
 }
 
@@ -114,22 +115,22 @@ export async function partyDues(orgId: string) {
     return m
   }
 
-  const saleDueMap = sumBy(sales, (i) => i.customerId, (i) => Math.max(0, i.total - i.paidAmount))
-  const purDueMap = sumBy(purDues, (i) => i.supplierId, (i) => Math.max(0, i.total - i.paidAmount))
-  const recMap = new Map((standaloneReceipts as Array<{ customerId: string | null; _sum: { amount: number | null } }>).map((r) => [r.customerId!, r._sum.amount ?? 0]))
-  const payMap = new Map((standalonePayments as Array<{ supplierId: string | null; _sum: { amount: number | null } }>).map((r) => [r.supplierId!, r._sum.amount ?? 0]))
+  const saleDueMap = sumBy(sales, (i) => i.customerId, (i) => Math.max(0, Number(i.total) - Number(i.paidAmount)))
+  const purDueMap = sumBy(purDues, (i) => i.supplierId, (i) => Math.max(0, Number(i.total) - Number(i.paidAmount)))
+  const recMap = new Map((standaloneReceipts as Array<{ customerId: string | null; _sum: { amount: unknown } }>).map((r) => [r.customerId!, Number(r._sum.amount ?? 0)]))
+  const payMap = new Map((standalonePayments as Array<{ supplierId: string | null; _sum: { amount: unknown } }>).map((r) => [r.supplierId!, Number(r._sum.amount ?? 0)]))
 
   const customerRows = customers.map((c) => ({
     id: c.id,
     name: c.name,
     phone: c.phone,
-    owed: round2(c.openingBalance + (saleDueMap.get(c.id) ?? 0) - (recMap.get(c.id) ?? 0)),
+    owed: round2(Number(c.openingBalance) + (saleDueMap.get(c.id) ?? 0) - (recMap.get(c.id) ?? 0)),
   }))
   const supplierRows = suppliers.map((sup) => ({
     id: sup.id,
     name: sup.name,
     phone: sup.phone,
-    owed: round2(sup.openingBalance + (purDueMap.get(sup.id) ?? 0) - (payMap.get(sup.id) ?? 0)),
+    owed: round2(Number(sup.openingBalance) + (purDueMap.get(sup.id) ?? 0) - (payMap.get(sup.id) ?? 0)),
   }))
 
   return {
@@ -172,7 +173,7 @@ export async function singlePartyDues(
     },
     select: { total: true, paidAmount: true },
   })
-  const invoiceDues = round2(invoices.reduce((sum, i) => sum + Math.max(0, i.total - i.paidAmount), 0))
+  const invoiceDues = round2(invoices.reduce((sum, i) => sum + Math.max(0, Number(i.total) - Number(i.paidAmount)), 0))
 
   const credit = await db.voucher.aggregate({
     where: {
@@ -183,13 +184,13 @@ export async function singlePartyDues(
     },
     _sum: { amount: true },
   })
-  const voucherCredit = round2(credit._sum.amount ?? 0)
+  const voucherCredit = round2(Number(credit._sum.amount ?? 0))
 
   return {
-    openingBalance: party.openingBalance,
+    openingBalance: Number(party.openingBalance),
     invoiceDues,
     voucherCredit,
-    owed: round2(party.openingBalance + invoiceDues - voucherCredit),
+    owed: round2(Number(party.openingBalance) + invoiceDues - voucherCredit),
   }
 }
 
@@ -206,9 +207,9 @@ export async function lowStockProducts(orgId: string) {
       id: p.id,
       name: p.name,
       barcode: p.barcode,
-      minQty: p.minQty,
-      qty: p.levels.reduce((s, l) => s + l.qty, 0),
-      warehouseNames: p.levels.filter((l) => l.qty > 0).map((l) => `${l.warehouse.name} (${l.qty})`).join('، ') || '-',
+      minQty: Number(p.minQty),
+      qty: p.levels.reduce((s, l) => s + Number(l.qty), 0),
+      warehouseNames: p.levels.filter((l) => Number(l.qty) > 0).map((l) => `${l.warehouse.name} (${Number(l.qty)})`).join('، ') || '-',
     }))
     .filter((p) => p.qty <= p.minQty)
     .sort((a, b) => a.qty / Math.max(1e-9, a.minQty) - b.qty / Math.max(1e-9, b.minQty))
@@ -220,7 +221,7 @@ export async function stockValuation(orgId: string): Promise<number> {
     where: { warehouse: { orgId } },
     select: { qty: true, product: { select: { cost: true } } },
   })
-  return round2(levels.reduce((s, l) => s + l.qty * l.product.cost, 0))
+  return round2(levels.reduce((s, l) => s + Number(l.qty) * Number(l.product.cost), 0))
 }
 
 void startOfToday

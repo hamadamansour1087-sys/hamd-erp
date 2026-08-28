@@ -25,10 +25,11 @@
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test'
 import { execSync } from 'node:child_process'
 import path from 'node:path'
+import { setupPgTestDatabase } from './pg-setup'
 
-const TEST_DB = path.resolve('db/test-security.db')
+const TEST_DB_NAME = 'hamd_test_security'
 
-process.env.DATABASE_URL = `file:${TEST_DB}`
+process.env.DATABASE_URL = `postgresql://hamd@127.0.0.1:5432/${TEST_DB_NAME}?connection_limit=10`
 process.env.AUTH_SECRET = 'test-secret-value-at-least-16-chars-long'
 process.env.NODE_ENV = 'test'
 
@@ -94,15 +95,7 @@ const json = async (res: Response) => {
 
 beforeAll(async () => {
   // disposable test database — rebuilt from scratch so the schema always matches
-  const fs = await import('node:fs')
-  for (const suffix of ['', '-journal', '-wal', '-shm']) {
-    try { fs.unlinkSync(TEST_DB + suffix) } catch { /* not present */ }
-  }
-  execSync(`bunx prisma db push --skip-generate`, {
-    cwd: process.cwd(),
-    env: { ...process.env, DATABASE_URL: `file:${TEST_DB}` },
-    stdio: 'pipe',
-  })
+  setupPgTestDatabase(TEST_DB_NAME)
   // wipe + seed
   await db.idempotencyKey.deleteMany()
   await db.voucher.deleteMany()
@@ -261,7 +254,7 @@ describe('Authorization matrix (server-side)', () => {
     // either rejected outright or the field was ignored — balance must be unchanged
     if (res.status === 200) {
       const fresh = await db.customer.findUnique({ where: { id: customerA.id } })
-      expect(fresh?.openingBalance).toBe(10)
+      expect(Number(fresh?.openingBalance)).toBe(10)
     } else {
       expect(res.status).toBe(403)
     }
@@ -359,7 +352,7 @@ describe('Idempotency (offline sync duplicates)', () => {
     const rows = await db.voucher.count({ where: { invoiceId: invoiceA.id } })
     expect(rows).toBe(1)
     const inv = await db.invoice.findUnique({ where: { id: invoiceA.id } })
-    expect(inv?.paidAmount).toBe(100)
+    expect(Number(inv?.paidAmount)).toBe(100)
   })
 })
 
@@ -381,10 +374,10 @@ describe('Financial concurrency — parallel payments', () => {
     expect(p1.status).toBe(200)
     expect(p2.status).toBe(200)
     const inv = await db.invoice.findUnique({ where: { id: invoiceA.id } })
-    expect(inv?.paidAmount).toBe(600) // 100 (idempotent test) + 200 + 300
+    expect(Number(inv?.paidAmount)).toBe(600) // 100 (idempotent test) + 200 + 300
     expect(inv?.status).toBe('PARTIAL')
     const sum = await db.voucher.aggregate({ where: { invoiceId: invoiceA.id }, _sum: { amount: true } })
-    expect(inv?.paidAmount).toBe(Math.min(inv!.total, sum._sum.amount ?? 0))
+    expect(Number(inv?.paidAmount)).toBe(Math.min(Number(inv!.total), Number(sum._sum.amount ?? 0)))
   })
 })
 
@@ -669,14 +662,14 @@ describe('Purchase cancellation reverts product cost (cost history rule)', () =>
     })))
     expect(p2.status).toBe(200)
     let prod = await db.product.findUnique({ where: { id: productA.id } })
-    expect(prod?.cost).toBe(80)
+    expect(Number(prod?.cost)).toBe(80)
     // cancel PURCHASE #2 → cost reverts to 50 (the previous non-cancelled purchase)
     const del = await invoiceIdRoute.DELETE(makeReq(`/api/invoices/${p2.json.data.id}`, {
       method: 'DELETE', session: { ...adminA, orgId: orgA.id, role: 'ADMIN' } as Sess,
     }), { params: Promise.resolve({ id: p2.json.data.id }) })
     expect(del.status).toBe(200)
     prod = await db.product.findUnique({ where: { id: productA.id } })
-    expect(prod?.cost).toBe(50)
+    expect(Number(prod?.cost)).toBe(50)
   })
 })
 

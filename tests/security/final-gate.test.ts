@@ -34,10 +34,12 @@
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test'
 import { execSync } from 'node:child_process'
 import path from 'node:path'
+import { setupPgTestDatabase } from './pg-setup'
 
-const TEST_DB = path.resolve('db/test-gate.db') // own file: bun runs test files in parallel
+// own database: bun runs test files in parallel
+const TEST_DB_NAME = 'hamd_test_gate'
 
-process.env.DATABASE_URL = `file:${TEST_DB}`
+process.env.DATABASE_URL = `postgresql://hamd@127.0.0.1:5432/${TEST_DB_NAME}?connection_limit=10`
 process.env.AUTH_SECRET = 'test-secret-value-at-least-16-chars-long'
 process.env.NODE_ENV = 'test'
 
@@ -118,14 +120,7 @@ const cashierSess = () => ({ id: cashierG.id, orgId: orgG.id, role: 'CASHIER' })
 
 beforeAll(async () => {
   // disposable test database — rebuilt from scratch so the schema always matches
-  for (const suffix of ['', '-journal', '-wal', '-shm']) {
-    try { await import('node:fs').then((fs) => fs.unlinkSync(TEST_DB + suffix)) } catch { /* not present */ }
-  }
-  execSync(`bunx prisma db push --skip-generate`, {
-    cwd: process.cwd(),
-    env: { ...process.env, DATABASE_URL: `file:${TEST_DB}` },
-    stdio: 'pipe',
-  })
+  setupPgTestDatabase(TEST_DB_NAME)
   // wipe + seed (only the gate tables; other suites share the db file)
   await db.idempotencyKey.deleteMany()
   await db.voucher.deleteMany()
@@ -434,12 +429,12 @@ describe('P0-06 — concurrent stock adjustments (no lost update)', () => {
     const movements = await db.stockMovement.findMany({
       where: { productId: productG.id, warehouseId: whG.id, kind: { startsWith: 'ADJUST' } },
     })
-    const ledgerSum = movements.reduce((s, m) => s + m.qty, 0)
+    const ledgerSum = movements.reduce((s, m) => s + Number(m.qty), 0)
 
     // final qty is one of the two requested absolute values (CAS serialized them)
-    expect([80, 150]).toContain(level?.qty)
+    expect([80, 150]).toContain(Number(level?.qty))
     // INVARIANT: StockLevel.qty === initial + Σ(ledger deltas) — never diverges
-    expect(level!.qty).toBe(100 + ledgerSum)
+    expect(Number(level!.qty)).toBe(100 + ledgerSum)
   })
 
   test('three parallel adjustments to the SAME value create exactly one movement', async () => {
@@ -458,12 +453,12 @@ describe('P0-06 — concurrent stock adjustments (no lost update)', () => {
     const level = await db.stockLevel.findUnique({
       where: { productId_warehouseId: { productId: productG.id, warehouseId: whG.id } },
     })
-    expect(level?.qty).toBe(555)
+    expect(Number(level?.qty)).toBe(555)
     const movements = await db.stockMovement.findMany({
       where: { productId: productG.id, warehouseId: whG.id, kind: { startsWith: 'ADJUST' } },
     })
     // only ONE of the three identical adjustments may have produced a ledger delta
-    const deltaSum = movements.reduce((s, m) => s + m.qty, 0)
+    const deltaSum = movements.reduce((s, m) => s + Number(m.qty), 0)
     const adjustMovsAfterSecondWave = movements.length - before
     // exactly one new movement (delta 555-200=+355); the other two saw delta 0
     expect(adjustMovsAfterSecondWave).toBe(1)
@@ -573,7 +568,7 @@ describe('P0-07 — idempotency survives a post-COMMIT crash', () => {
 
     const fresh = await db.invoice.findUnique({ where: { id: invoiceId } })
     // 250 applied ONCE — the retry did not pay again
-    expect(fresh?.paidAmount).toBe(250)
+    expect(Number(fresh?.paidAmount)).toBe(250)
     expect(await db.voucher.count({ where: { invoiceId } })).toBe(1)
   })
 })
@@ -636,7 +631,7 @@ describe('STOCK-1 — crash-safe stock adjustment idempotency', () => {
     // exactly ONE movement for this operation; level unaffected by the replay
     expect(await db.stockMovement.count({ where: { orgId: orgG.id, clientOperationId: scoped } })).toBe(1)
     const level = await db.stockLevel.findUnique({ where: { productId_warehouseId: { productId: prod.id, warehouseId: whG.id } } })
-    expect(level?.qty).toBe(25)
+    expect(Number(level?.qty)).toBe(25)
     expect(await db.stockMovement.count({ where: { productId: prod.id, warehouseId: whG.id } })).toBe(1)
   })
 
@@ -674,7 +669,7 @@ describe('STOCK-1 — crash-safe stock adjustment idempotency', () => {
     expect(await db.stockMovement.count({ where: { orgId: orgG.id, clientOperationId: scoped } })).toBe(1)
     expect(await db.stockMovement.count({ where: { productId: prod.id, warehouseId: whG.id } })).toBe(1)
     const level = await db.stockLevel.findUnique({ where: { productId_warehouseId: { productId: prod.id, warehouseId: whG.id } } })
-    expect(level?.qty).toBe(30)
+    expect(Number(level?.qty)).toBe(30)
   })
 
   test('2b. crash + an intervening adjustment → retry must NOT re-apply the original', async () => {
@@ -711,10 +706,10 @@ describe('STOCK-1 — crash-safe stock adjustment idempotency', () => {
     expect(await db.stockMovement.count({ where: { orgId: orgG.id, clientOperationId: scoped } })).toBe(1)
 
     const level = await db.stockLevel.findUnique({ where: { productId_warehouseId: { productId: prod.id, warehouseId: whG.id } } })
-    expect(level?.qty).toBe(50)
+    expect(Number(level?.qty)).toBe(50)
     const movements = await db.stockMovement.findMany({ where: { productId: prod.id, warehouseId: whG.id } })
     expect(movements.length).toBe(2) // +30 (original) and +20 (later count) — nothing else
-    const ledgerSum = movements.reduce((s, m) => s + m.qty, 0)
+    const ledgerSum = movements.reduce((s, m) => s + Number(m.qty), 0)
     expect(ledgerSum).toBe(50)
   })
 
@@ -740,7 +735,7 @@ describe('STOCK-1 — crash-safe stock adjustment idempotency', () => {
     // exactly one movement, level untouched by the rejected replay
     expect(await db.stockMovement.count({ where: { productId: prod.id, warehouseId: whG.id } })).toBe(1)
     const level = await db.stockLevel.findUnique({ where: { productId_warehouseId: { productId: prod.id, warehouseId: whG.id } } })
-    expect(level?.qty).toBe(10)
+    expect(Number(level?.qty)).toBe(10)
   })
 
   test('4. different organization + same key → independent operation', async () => {
@@ -776,8 +771,8 @@ describe('STOCK-1 — crash-safe stock adjustment idempotency', () => {
     expect(await db.stockMovement.count({ where: { orgId: org2.id, clientOperationId: scoped } })).toBe(1)
     const l1 = await db.stockLevel.findUnique({ where: { productId_warehouseId: { productId: prod1.id, warehouseId: whG.id } } })
     const l2 = await db.stockLevel.findUnique({ where: { productId_warehouseId: { productId: prod2.id, warehouseId: wh2.id } } })
-    expect(l1?.qty).toBe(7)
-    expect(l2?.qty).toBe(70)
+    expect(Number(l1?.qty)).toBe(7)
+    expect(Number(l2?.qty)).toBe(70)
   })
 
   test('5. concurrent adjustments (Promise.all) — StockLevel == ledger sum, concurrent same-key creates ONE movement', async () => {
@@ -791,9 +786,9 @@ describe('STOCK-1 — crash-safe stock adjustment idempotency', () => {
     ])
     const level = await db.stockLevel.findUnique({ where: { productId_warehouseId: { productId: prod.id, warehouseId: whG.id } } })
     const movements = await db.stockMovement.findMany({ where: { productId: prod.id, warehouseId: whG.id } })
-    const ledgerSum = movements.reduce((s, m) => s + m.qty, 0)
-    expect(level!.qty).toBe(ledgerSum) // ledger can never diverge from qty
-    expect([100, 45, 60]).toContain(level?.qty)
+    const ledgerSum = movements.reduce((s, m) => s + Number(m.qty), 0)
+    expect(Number(level!.qty)).toBe(ledgerSum) // ledger can never diverge from qty
+    expect([100, 45, 60]).toContain(Number(level?.qty))
 
     // 5b. two CONCURRENT requests with the SAME key → exactly one movement
     const prod2 = await db.product.create({ data: { orgId: orgG.id, name: 'Idem Prod 5b', price: 10, cost: 5, trackStock: true } })
@@ -807,7 +802,7 @@ describe('STOCK-1 — crash-safe stock adjustment idempotency', () => {
     const raceMovements = await db.stockMovement.findMany({ where: { orgId: orgG.id, clientOperationId: clientOperationIdFor('stock-adjust', key) } })
     expect(raceMovements.length).toBe(1)
     const level2 = await db.stockLevel.findUnique({ where: { productId_warehouseId: { productId: prod2.id, warehouseId: whG.id } } })
-    expect(level2?.qty).toBe(33)
+    expect(Number(level2?.qty)).toBe(33)
     expect(await db.stockMovement.count({ where: { productId: prod2.id, warehouseId: whG.id } })).toBe(1)
   })
 })
@@ -971,7 +966,7 @@ describe('STOCK-2 — negative-stock policy (atomic enforcement)', () => {
     expect(res.json.error).toBe('insufficient-stock')
 
     const level = await db.stockLevel.findUnique({ where: { productId_warehouseId: { productId: prod.id, warehouseId: whG.id } } })
-    expect(level?.qty).toBe(5) // never -95
+    expect(Number(level?.qty)).toBe(5) // never -95
     expect(await db.stockLevel.count({ where: { productId: prod.id, warehouseId: wh2.id } })).toBe(0)
     expect(await db.stockMovement.count({ where: { productId: prod.id, kind: { startsWith: 'TRANSFER' } } })).toBe(0)
     expect(await db.transfer.count({ where: { orgId: orgG.id } })).toBe(0)
@@ -991,16 +986,16 @@ describe('STOCK-2 — negative-stock policy (atomic enforcement)', () => {
 
     const src = await db.stockLevel.findUnique({ where: { productId_warehouseId: { productId: prod.id, warehouseId: whG.id } } })
     const dst = await db.stockLevel.findUnique({ where: { productId_warehouseId: { productId: prod.id, warehouseId: wh2.id } } })
-    expect(src?.qty).toBe(20)
-    expect(dst?.qty).toBe(80)
+    expect(Number(src?.qty)).toBe(20)
+    expect(Number(dst?.qty)).toBe(80)
 
     const movements = await db.stockMovement.findMany({ where: { productId: prod.id } })
-    const sumFrom = movements.filter((m) => m.warehouseId === whG.id).reduce((s, m) => s + m.qty, 0)
-    const sumTo = movements.filter((m) => m.warehouseId === wh2.id).reduce((s, m) => s + m.qty, 0)
+    const sumFrom = movements.filter((m) => m.warehouseId === whG.id).reduce((s, m) => s + Number(m.qty), 0)
+    const sumTo = movements.filter((m) => m.warehouseId === wh2.id).reduce((s, m) => s + Number(m.qty), 0)
     expect(sumFrom).toBe(20) // 100 - 80
     expect(sumTo).toBe(80)
-    expect(src!.qty).toBe(sumFrom)
-    expect(dst!.qty).toBe(sumTo)
+    expect(Number(src!.qty)).toBe(sumFrom)
+    expect(Number(dst!.qty)).toBe(sumTo)
     // ledger movements reference the created transfer document
     const transferRow = await db.transfer.findFirst({ where: { orgId: orgG.id } })
     expect(transferRow).not.toBeNull()
@@ -1024,11 +1019,11 @@ describe('STOCK-2 — negative-stock policy (atomic enforcement)', () => {
     expect(statuses).toEqual([200, 409]) // FORBIDDEN: both succeed / final < 0
 
     const level = await db.stockLevel.findUnique({ where: { productId_warehouseId: { productId: prod.id, warehouseId: whG.id } } })
-    expect(level?.qty).toBe(20)
+    expect(Number(level?.qty)).toBe(20)
     const movements = await db.stockMovement.findMany({ where: { productId: prod.id, warehouseId: whG.id, kind: 'TRANSFER_OUT' } })
     expect(movements.length).toBe(1)
-    expect(movements[0].qty).toBe(-80)
-    const sumFrom = await db.stockMovement.findMany({ where: { productId: prod.id, warehouseId: whG.id } }).then((ms) => ms.reduce((s, m) => s + m.qty, 0))
+    expect(Number(movements[0].qty)).toBe(-80)
+    const sumFrom = await db.stockMovement.findMany({ where: { productId: prod.id, warehouseId: whG.id } }).then((ms) => ms.reduce((s, m) => s + Number(m.qty), 0))
     expect(sumFrom).toBe(20)
   })
 
@@ -1047,19 +1042,19 @@ describe('STOCK-2 — negative-stock policy (atomic enforcement)', () => {
 
     const transferRow = await db.transfer.findUnique({ where: { id: transferId }, include: { items: true } })
     expect(transferRow?.items.length).toBe(1)
-    expect(transferRow?.items[0].qty).toBe(30)
+    expect(Number(transferRow?.items[0].qty)).toBe(30)
     const movements = await db.stockMovement.findMany({ where: { refType: 'TRANSFER', refId: transferId } })
     expect(movements.length).toBe(2) // out + in pair
     const out = movements.find((m) => m.kind === 'TRANSFER_OUT')!
     const inn = movements.find((m) => m.kind === 'TRANSFER_IN')!
     expect(out.warehouseId).toBe(whG.id)
-    expect(out.qty).toBe(-30)
+    expect(Number(out.qty)).toBe(-30)
     expect(inn.warehouseId).toBe(wh2.id)
-    expect(inn.qty).toBe(30)
+    expect(Number(inn.qty)).toBe(30)
     const src = await db.stockLevel.findUnique({ where: { productId_warehouseId: { productId: prod.id, warehouseId: whG.id } } })
     const dst = await db.stockLevel.findUnique({ where: { productId_warehouseId: { productId: prod.id, warehouseId: wh2.id } } })
-    expect(src?.qty).toBe(20)
-    expect(dst?.qty).toBe(30)
+    expect(Number(src?.qty)).toBe(20)
+    expect(Number(dst?.qty)).toBe(30)
   })
 
   test('5. SALE under allowNegativeStock=false → 409 atomically; default true keeps documented allow-with-warning', async () => {
@@ -1078,7 +1073,7 @@ describe('STOCK-2 — negative-stock policy (atomic enforcement)', () => {
     expect(await db.invoice.count({ where: { orgId: orgG.id, status: { not: 'CANCELLED' }, items: { some: { productId: prod.id, qty: 100 } } } })).toBe(0)
     expect(await db.stockMovement.count({ where: { productId: prod.id, kind: 'SALE' } })).toBe(0)
     const lvl1 = await db.stockLevel.findUnique({ where: { productId_warehouseId: { productId: prod.id, warehouseId: whG.id } } })
-    expect(lvl1?.qty).toBe(5)
+    expect(Number(lvl1?.qty)).toBe(5)
 
     // policy ON (default) → documented POS behavior: allowed WITH warning
     await db.org.update({ where: { id: orgG.id }, data: { allowNegativeStock: true } })
@@ -1090,7 +1085,7 @@ describe('STOCK-2 — negative-stock policy (atomic enforcement)', () => {
     expect(Array.isArray(r2.json.data.warnings)).toBe(true)
     expect(r2.json.data.warnings.length).toBeGreaterThan(0)
     const lvl2 = await db.stockLevel.findUnique({ where: { productId_warehouseId: { productId: prod.id, warehouseId: whG.id } } })
-    expect(lvl2?.qty).toBe(-95)
+    expect(Number(lvl2?.qty)).toBe(-95)
   })
 
   test('6. PURCHASE cancel — allowed (negative) by default; atomically rejected when policy disabled', async () => {
@@ -1113,7 +1108,7 @@ describe('STOCK-2 — negative-stock policy (atomic enforcement)', () => {
     }), { params: Promise.resolve({ id: inv1.json.data.invoice.id }) }))
     expect(del1.status).toBe(200)
     const lvlA = await db.stockLevel.findUnique({ where: { productId_warehouseId: { productId: prod.id, warehouseId: whG.id } } })
-    expect(lvlA?.qty).toBe(-10)
+    expect(Number(lvlA?.qty)).toBe(-10)
 
     // policy disabled (fresh product, isolated levels): purchase +10, sell 10 → 0,
     // cancel purchase → 409 (stock would go negative), nothing changed
@@ -1129,7 +1124,7 @@ describe('STOCK-2 — negative-stock policy (atomic enforcement)', () => {
     })))
     expect(sale2.status).toBe(200)
     const lvlB = await db.stockLevel.findUnique({ where: { productId_warehouseId: { productId: prodB.id, warehouseId: whG.id } } })
-    expect(lvlB?.qty).toBe(0)
+    expect(Number(lvlB?.qty)).toBe(0)
     const del2 = await json(await invoiceDetailRoute.DELETE(makeReq(`/api/invoices/${inv2.json.data.invoice.id}`, {
       method: 'DELETE', session: adminSess(),
     }), { params: Promise.resolve({ id: inv2.json.data.invoice.id }) }))

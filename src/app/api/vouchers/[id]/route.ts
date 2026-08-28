@@ -21,8 +21,8 @@ export async function DELETE(req: NextRequest, ctx: { params: Promise<{ id: stri
         select: { id: true, paidAmount: true, total: true, status: true },
       })
       if (inv && inv.status !== 'CANCELLED') {
-        const newPaid = round2(Math.max(0, Math.min(inv.total, inv.paidAmount - voucher.amount)))
-        const status = newPaid <= 0 ? 'UNPAID' : newPaid >= inv.total ? 'PAID' : 'PARTIAL'
+        const newPaid = round2(Math.max(0, Math.min(Number(inv.total), Number(inv.paidAmount) - Number(voucher.amount))))
+        const status = newPaid <= 0 ? 'UNPAID' : newPaid >= Number(inv.total) ? 'PAID' : 'PARTIAL'
         // Tenant-scoped write: matches on id + orgId.
         await tx.invoice.updateMany({
           where: { id: inv.id, orgId: s.orgId },

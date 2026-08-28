@@ -1,5 +1,5 @@
 import { getSession } from '@/lib/auth'
-import { bad, unauthorized, forbidden } from '@/lib/api-helpers'
+import { bad, unauthorized, forbidden, decToNum } from '@/lib/api-helpers'
 import { NextRequest } from 'next/server'
 import { db } from '@/lib/db'
 
@@ -75,7 +75,7 @@ export async function GET(req: NextRequest) {
     const stamp = new Date().toISOString().slice(0, 10)
     // No JSON indent: a 20k-item backup pretty-printed roughly doubles the
     // memory spike and file size for zero machine-readability benefit.
-    return new Response(JSON.stringify(backup), {
+    return new Response(JSON.stringify(decToNum(backup)), {
       headers: {
         'Content-Type': 'application/json; charset=utf-8',
         'Content-Disposition': `attachment; filename="tijara-backup-${stamp}.json"`,

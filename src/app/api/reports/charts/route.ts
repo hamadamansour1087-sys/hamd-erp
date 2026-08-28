@@ -72,20 +72,20 @@ export async function GET(req: NextRequest) {
   for (const inv of salesInv) {
     const b = buckets.get(keyOf(new Date(inv.date)))
     if (!b) continue
-    b.sales += inv.total
-    b.netRev += inv.total - inv.taxAmount
-    b.profit += inv.total - inv.taxAmount - inv.costTotal
+    b.sales += Number(inv.total)
+    b.netRev += Number(inv.total) - Number(inv.taxAmount)
+    b.profit += Number(inv.total) - Number(inv.taxAmount) - Number(inv.costTotal)
     b.count++
   }
   for (const inv of purInv) {
     const b = buckets.get(keyOf(new Date(inv.date)))
     if (!b) continue
-    b.purchases += inv.total
+    b.purchases += Number(inv.total)
   }
   for (const ex of expenses) {
     const b = buckets.get(keyOf(new Date(ex.date)))
     if (!b) continue
-    b.expenses += ex.amount
+    b.expenses += Number(ex.amount)
   }
 
   const sortedKeys = Array.from(buckets.keys()).sort()
@@ -118,8 +118,8 @@ export async function GET(req: NextRequest) {
 
   const topProducts = topItems.map((t) => ({
     label: pmap.get(t.productId)?.name ?? '-',
-    value: round2(t._sum.total ?? 0),
-    secondary: t._sum.qty ?? 0,
+    value: round2(Number(t._sum.total ?? 0)),
+    secondary: Number(t._sum.qty ?? 0),
   }))
 
   // category revenue within range
@@ -136,7 +136,7 @@ export async function GET(req: NextRequest) {
       if (!p || !p.categoryId) return '__none__'
       return p.categoryId
     })()
-    catTotals.set(catName, (catTotals.get(catName) ?? 0) + it.total)
+    catTotals.set(catName, (catTotals.get(catName) ?? 0) + Number(it.total))
   }
   const topCategories = Array.from(catTotals.entries())
     .map(([id, v]) => ({ label: id === '__none__' ? 'غير مصنف' : (catMap.get(id) ?? 'غير مصنف'), value: round2(v) }))
@@ -159,7 +159,7 @@ export async function GET(req: NextRequest) {
   const cmap = new Map(custs.map((c) => [c.id, c.name]))
   const topCustomers = custAgg.map((c) => ({
     label: (c.customerId && cmap.get(c.customerId)) || 'عميل نقدي',
-    value: round2(c._sum.total ?? 0),
+    value: round2(Number(c._sum.total ?? 0)),
   }))
 
   void round2

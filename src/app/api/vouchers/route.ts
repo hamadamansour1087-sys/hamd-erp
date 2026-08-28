@@ -130,7 +130,12 @@ export async function POST(req: NextRequest) {
 
   try {
     const result = await withIdempotency(req, s, 'voucher', async (clientOpId) => {
-      const created = await db.$transaction(async (tx) => {
+      // PG-SAFE CRASH-WINDOW DEDUPE: a P2002 aborts a PostgreSQL transaction
+      // (25P02 on any later statement), so the committed-duplicate resolution
+      // lives in the catch OUTSIDE the transaction (fresh connection).
+      let created: Awaited<ReturnType<typeof db.voucher.create>>
+      try {
+      created = await db.$transaction(async (tx) => {
       const c = await tx.counter.upsert({
         where: { orgId_docKey: { orgId: s.orgId, docKey: type === 'RECEIPT' ? 'RCV' : 'PMT' } },
         create: { orgId: s.orgId, docKey: type === 'RECEIPT' ? 'RCV' : 'PMT', next: 2 },
@@ -160,9 +165,7 @@ export async function POST(req: NextRequest) {
       // document inside the same transaction (@@unique per org). A retry after
       // a post-COMMIT crash resolves to the committed voucher — and skips the
       // paidAmount application below (already applied by the original attempt).
-      let voucher: Awaited<ReturnType<typeof tx.voucher.create>>
-      try {
-        voucher = await tx.voucher.create({
+      const voucher = await tx.voucher.create({
           data: {
             orgId: s.orgId,
             number,
@@ -180,15 +183,6 @@ export async function POST(req: NextRequest) {
             date: safeDate(body.date) ?? new Date(),
           },
         })
-      } catch (e) {
-        if (clientOpId && isUniqueViolation(e, 'clientOperationId')) {
-          const dup = await tx.voucher.findFirst({
-            where: { orgId: s.orgId, clientOperationId: clientOpId },
-          })
-          if (dup) return dup
-        }
-        throw e
-      }
 
       if (invoiceId) {
         // Compare-and-swap: re-read paidAmount inside the write transaction and only
@@ -202,11 +196,11 @@ export async function POST(req: NextRequest) {
             select: { total: true, paidAmount: true },
           })
           if (!inv) throw new OperationConflictError('invoice-vanished')
-          if (round2(inv.paidAmount + amount) > round2(inv.total + 0.001)) {
+          if (round2(Number(inv.paidAmount) + amount) > round2(Number(inv.total) + 0.001)) {
             throw new OperationConflictError('amount-exceeds-due')
           }
-          const newPaid = round2(inv.paidAmount + amount)
-          const status = newPaid <= 0 ? 'UNPAID' : newPaid >= inv.total ? 'PAID' : 'PARTIAL'
+          const newPaid = round2(Number(inv.paidAmount) + amount)
+          const status = newPaid <= 0 ? 'UNPAID' : newPaid >= Number(inv.total) ? 'PAID' : 'PARTIAL'
           const upd = await tx.invoice.updateMany({
             where: { id: invoiceId, paidAmount: inv.paidAmount },
             data: { paidAmount: newPaid, status },
@@ -216,8 +210,17 @@ export async function POST(req: NextRequest) {
         }
       }
       return voucher
-    })
-    return created
+      })
+      } catch (e) {
+        // This transaction rolled back; the duplicate (if any) was committed by
+        // the ORIGINAL attempt — its paidAmount effects are already applied.
+        if (clientOpId && isUniqueViolation(e, 'clientOperationId')) {
+          const dup = await db.voucher.findFirst({ where: { orgId: s.orgId, clientOperationId: clientOpId } })
+          if (dup) return dup
+        }
+        throw e
+      }
+      return created
   })
 
   // withIdempotency releases the claim when the handler throws — map typed

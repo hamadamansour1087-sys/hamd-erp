@@ -22,10 +22,13 @@
  */
 import { execSync } from 'node:child_process'
 import path from 'node:path'
+import { setupPgTestDatabase } from './pg-setup'
 
-const TEST_DB = path.resolve('db/test-hardening.db')
+// PG TEST DATABASE (production provider): own database per test file, dropped
+// + recreated + schema-pushed fresh on every run.
+const TEST_DB_NAME = 'hamd_test_hardening'
 
-process.env.DATABASE_URL = `file:${TEST_DB}`
+process.env.DATABASE_URL = `postgresql://hamd@127.0.0.1:5432/${TEST_DB_NAME}?connection_limit=10`
 process.env.AUTH_SECRET = 'test-secret-value-at-least-16-chars-long'
 process.env.NODE_ENV = 'test'
 
@@ -86,14 +89,7 @@ const managerSess = () => ({ id: managerA.id, orgId: orgA.id, role: 'MANAGER' })
 const adminBSess = () => ({ id: adminB.id, orgId: orgB.id, role: 'ADMIN' }) as Sess
 
 beforeAll(async () => {
-  for (const suffix of ['', '-journal', '-wal', '-shm']) {
-    try { await import('node:fs').then((fs) => fs.unlinkSync(TEST_DB + suffix)) } catch { /* not present */ }
-  }
-  execSync(`bunx prisma db push --skip-generate`, {
-    cwd: process.cwd(),
-    env: { ...process.env, DATABASE_URL: `file:${TEST_DB}` },
-    stdio: 'pipe',
-  })
+  setupPgTestDatabase(TEST_DB_NAME)
   await db.idempotencyKey.deleteMany()
   await db.loginAttempt.deleteMany()
   await db.voucher.deleteMany()
@@ -169,7 +165,7 @@ test('H1. voucher overpaying an invoice â†’ 409 amount-exceeds-due; exact pay â†
   expect(over.json.error).toBe('amount-exceeds-due')
 
   const after = await db.invoice.findUnique({ where: { id: invoiceId }, select: { paidAmount: true, status: true } })
-  expect(after?.paidAmount).toBe(0)
+  expect(Number(after?.paidAmount)).toBe(0)
 
   const exact = await json(
     await vouchersRoute.POST(
@@ -183,7 +179,7 @@ test('H1. voucher overpaying an invoice â†’ 409 amount-exceeds-due; exact pay â†
   expect(exact.status).toBe(200)
 
   const paid = await db.invoice.findUnique({ where: { id: invoiceId }, select: { paidAmount: true, status: true } })
-  expect(paid?.paidAmount).toBe(200)
+  expect(Number(paid?.paidAmount)).toBe(200)
   expect(paid?.status).toBe('PAID')
 
   // second payment now exceeds due again â†’ 409

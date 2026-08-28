@@ -24,6 +24,22 @@ import { NextRequest, NextResponse } from 'next/server'
  * policies. Other security headers remain in next.config.ts.
  */
 export function proxy(request: NextRequest) {
+  // REQUEST CORRELATION ID (observability floor): every request — pages AND
+  // api — gets a stable id (honours an upstream load-balancer's header when
+  // present). Logged as one structured line WITHOUT query strings (queries
+  // can carry search terms; never tokens/passwords — those live in bodies).
+  const requestId = request.headers.get('x-request-id') ?? crypto.randomUUID()
+  console.log(
+    JSON.stringify({
+      t: new Date().toISOString(),
+      lvl: 'info',
+      msg: 'request',
+      id: requestId,
+      m: request.method,
+      p: request.nextUrl.pathname,
+    })
+  )
+
   const nonce = Buffer.from(crypto.randomUUID()).toString('base64')
 
   const isDev = process.env.NODE_ENV !== 'production'
@@ -49,14 +65,17 @@ export function proxy(request: NextRequest) {
 
   const requestHeaders = new Headers(request.headers)
   requestHeaders.set('x-nonce', nonce)
+  requestHeaders.set('x-request-id', requestId)
   requestHeaders.set('Content-Security-Policy', csp)
 
   const response = NextResponse.next({ request: { headers: requestHeaders } })
   response.headers.set('Content-Security-Policy', csp)
+  response.headers.set('x-request-id', requestId)
   return response
 }
 
 export const config = {
-  // Skip API routes (JSON — no CSP needed) and immutable static assets.
-  matcher: ['/((?!api|_next/static|_next/image|favicon.ico).*)'],
+  // Include /api (request-id + correlation log) but skip immutable static
+  // assets. CSP itself is harmless on JSON responses.
+  matcher: ['/((?!_next/static|_next/image|favicon.ico).*)'],
 }

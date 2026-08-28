@@ -158,7 +158,7 @@ async function main() {
       },
       select: { id: true, name: true, cost: true, price: true },
     })
-    products.push(p)
+    products.push({ ...p, cost: Number(p.cost), price: Number(p.price) })
   }
 
   // ---- Purchase invoices first (stock arrives), then sales history ----

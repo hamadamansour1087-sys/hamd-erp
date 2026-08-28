@@ -22,11 +22,12 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'invalid' }, { status: 400 })
     }
 
-    // PRE-AUTH DoS DAMPER (per-IP, in-memory, best-effort): stops scrypt-cost
-    // floods before any password work. NOT the brute-force control — the real
-    // per-account cap is the DB-backed fail-only ledger below.
+    // PRE-AUTH scrypt-cost DAMPER (per-IP, in-memory, best-effort): caps the
+    // CPU burn of password floods BEFORE any password work. High enough that
+    // no realistic office hits it; the REAL brute-force control is the
+    // DB-backed fail-only ledger (per-account AND per-ip) below.
     const ip = clientIp(req)
-    if (!rateLimit(`login:ip:${ip}`, 20, 5 * 60_000)) {
+    if (!rateLimit(`login:ip:${ip}`, 300, 5 * 60_000)) {
       return tooMany()
     }
 
@@ -37,12 +38,12 @@ export async function POST(req: NextRequest) {
     if (!user || !user.active || !(await verifyPasswordAsync(password, user.passwordHash))) {
       // Timing-equalize: always run one scrypt verification, even for unknown emails.
       if (!user) await verifyPasswordAsync(password, DUMMY_HASH)
-      // DB-backed FAIL-ONLY per-account cap (multi-instance-safe, survives
-      // restarts): an attacker spamming wrong passwords cannot lock the real
-      // owner out — a request with the CORRECT password never reaches this
-      // limiter and still succeeds, while brute-forcing stays capped at
-      // 10 recorded fails / 5 min.
-      if (!(await recordFailedLogin(email, ip))) {
+      // DB-backed FAIL-ONLY caps (multi-instance-safe, survives restarts):
+      // per-ACCOUNT 10 failures / 5 min AND per-IP 20 failures / 5 min.
+      // Successful logins are never recorded — a correct password can never
+      // be locked out by an attacker spamming the same address.
+      const budget = await recordFailedLogin(email, ip)
+      if (!budget.acct || !budget.ip) {
         return tooMany()
       }
       return NextResponse.json({ error: 'invalid' }, { status: 401 })

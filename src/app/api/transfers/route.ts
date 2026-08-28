@@ -128,7 +128,12 @@ export async function POST(req: NextRequest) {
   let result
   try {
     result = await withIdempotency(req, s, 'transfer', async (clientOpId) => {
-      const created = await withStockLock(`transfer:${fromId}`, () => db.$transaction(async (tx) => {
+      // PG-SAFE CRASH-WINDOW DEDUPE: a P2002 aborts a PostgreSQL transaction,
+      // so the committed-transfer resolution lives in the catch OUTSIDE the
+      // transaction (fresh connection sees the committed document).
+      let created: { id: string; number: number }
+      try {
+      created = await withStockLock(`transfer:${fromId}`, () => db.$transaction(async (tx) => {
     const c = await tx.counter.upsert({
       where: { orgId_docKey: { orgId: s.orgId, docKey: 'TRF' } },
       create: { orgId: s.orgId, docKey: 'TRF', next: 2 },
@@ -139,9 +144,7 @@ export async function POST(req: NextRequest) {
     // CRASH-WINDOW DEDUPE: scoped key embedded in the document (@@unique per
     // org). A retry after a post-COMMIT crash resolves to the committed
     // transfer — stock effects below were already applied by the original.
-    let transfer: Awaited<ReturnType<typeof tx.transfer.create>>
-    try {
-      transfer = await tx.transfer.create({
+    const transfer = await tx.transfer.create({
         data: {
           orgId: s.orgId,
           number,
@@ -156,16 +159,6 @@ export async function POST(req: NextRequest) {
         },
         include: { items: true },
       })
-    } catch (e) {
-      if (clientOpId && isUniqueViolation(e, 'clientOperationId')) {
-        const dup = await tx.transfer.findFirst({
-          where: { orgId: s.orgId, clientOperationId: clientOpId },
-          include: { items: true },
-        })
-        if (dup) return dup
-      }
-      throw e
-    }
 
     for (const it of items) {
       // ATOMIC negative-stock guard at the source: the WHERE clause is part
@@ -210,7 +203,17 @@ export async function POST(req: NextRequest) {
       })
     }
     return transfer
-  }))
+    }))
+
+      } catch (e) {
+        // This transaction rolled back; the duplicate (if any) was committed by
+        // the ORIGINAL attempt — its stock movements are already applied.
+        if (clientOpId && isUniqueViolation(e, 'clientOperationId')) {
+          const dup = await db.transfer.findFirst({ where: { orgId: s.orgId, clientOperationId: clientOpId }, include: { items: true } })
+          if (dup) return { id: dup.id, number: dup.number, itemCount: dup.items.length }
+        }
+        throw e
+      }
 
       return { id: created.id, number: created.number, itemCount: items.length }
     })

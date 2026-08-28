@@ -185,13 +185,13 @@ export async function POST(req: NextRequest) {
     // Sanity cap: a 1e307 qty would poison stock math (Infinity on sum) and
     // every report downstream — reject the invoice instead of clamping money.
     if (qty > MAX_QTY) return bad('qty-too-large')
-    const defaultPrice = type === 'SALE' ? product.price : product.cost
+    const defaultPrice = type === 'SALE' ? Number(product.price) : Number(product.cost)
     const price = it.price !== undefined && it.price !== null && num(it.price, 0) >= 0 ? num(it.price, 0) : defaultPrice
     const level = await db.stockLevel.findUnique({
       where: { productId_warehouseId: { productId, warehouseId: warehouse.id } },
       select: { qty: true },
     })
-    const currentQty = level?.qty ?? 0
+    const currentQty = Number(level?.qty ?? 0)
     const effectiveQty = product.trackStock ? currentQty : Infinity
     let warnNegative = false
     if (product.trackStock) {
@@ -205,7 +205,7 @@ export async function POST(req: NextRequest) {
       productId,
       qty: round2(qty),
       price: round2(price),
-      costAtSale: type === 'SALE' ? product.cost : round2(price),
+      costAtSale: type === 'SALE' ? Number(product.cost) : round2(price),
       nameSnap: product.name,
       unitSnap: product.unit?.shortName ?? product.unit?.name ?? null,
       barcodeSnap: product.barcode,
@@ -220,7 +220,7 @@ export async function POST(req: NextRequest) {
   discount = Math.min(discount, subtotal)
   // Tax percent must stay in a sane range — never negative, never above 100.
   const taxPercent = body.taxPercent !== undefined ? Math.min(100, Math.max(0, num(body.taxPercent, 0))) : undefined
-  const taxPercentFinal = taxPercent !== undefined ? taxPercent : (await db.org.findUnique({ where: { id: s.orgId }, select: { taxPercent: true } }))?.taxPercent ?? 14
+  const taxPercentFinal = taxPercent !== undefined ? taxPercent : Number((await db.org.findUnique({ where: { id: s.orgId }, select: { taxPercent: true } }))?.taxPercent ?? 14)
   const taxAmount = round2(((subtotal - discount) * taxPercentFinal) / 100)
   const total = round2(subtotal - discount + taxAmount)
   const costTotal = round2(normItems.reduce((sum, it) => sum + it.qty * it.costAtSale, 0))
@@ -238,15 +238,18 @@ export async function POST(req: NextRequest) {
   let result
   try {
     result = await withIdempotency(req, s, 'invoice', async (clientOpId) => {
-    const created = await db.$transaction(async (tx) => {
+    // PG-SAFE CRASH-WINDOW DEDUPE: a P2002 aborts a PostgreSQL transaction
+    // (25P02 on any later statement), so the committed-invoice resolution
+    // lives in the catch OUTSIDE the transaction (fresh connection).
+    let created: { invoice: Awaited<ReturnType<typeof db.invoice.create>> & { items: unknown[] }; voucherNumber: number | null }
+    try {
+    created = await db.$transaction(async (tx) => {
     const number = await nextDocNumber(tx, s.orgId, type === 'SALE' ? 'INV' : 'PUR')
     // CRASH-WINDOW DEDUPE: the scoped idempotency key is embedded in the
     // document inside the same transaction. If a previous attempt already
     // committed (crash after COMMIT, lost claim), the @@unique([orgId,
     // clientOperationId]) violation resolves to that invoice — no second one.
-    let invoice: Awaited<ReturnType<typeof tx.invoice.create>>
-    try {
-      invoice = await tx.invoice.create({
+    const invoice = await tx.invoice.create({
         data: {
           orgId: s.orgId,
           number,
@@ -282,24 +285,6 @@ export async function POST(req: NextRequest) {
         },
         include: { items: true },
       })
-    } catch (e) {
-      if (clientOpId && isUniqueViolation(e, 'clientOperationId')) {
-        const dup = await tx.invoice.findFirst({
-          where: { orgId: s.orgId, clientOperationId: clientOpId },
-          include: { items: true },
-        })
-        if (dup) {
-          const dupVoucher = await tx.voucher.findFirst({
-            where: { orgId: s.orgId, invoiceId: dup.id },
-            select: { number: true },
-          })
-          // Everything below (stock, cost, voucher) was already applied by the
-          // original attempt — return the committed document untouched.
-          return { invoice: dup, voucherNumber: dupVoucher?.number ?? null }
-        }
-      }
-      throw e
-    }
 
     // stock effects
     for (const it of normItems) {
@@ -372,6 +357,26 @@ export async function POST(req: NextRequest) {
 
     return { invoice, voucherNumber }
   })
+    } catch (e) {
+      // This transaction rolled back; the duplicate (if any) was committed by
+      // the ORIGINAL attempt — stock, cost and payment voucher are already
+      // applied. Re-read the committed document on a fresh connection.
+      if (clientOpId && isUniqueViolation(e, 'clientOperationId')) {
+        const dup = await db.invoice.findFirst({
+          where: { orgId: s.orgId, clientOperationId: clientOpId },
+          include: { items: true },
+        })
+        if (dup) {
+          const dupVoucher = await db.voucher.findFirst({
+            where: { orgId: s.orgId, invoiceId: dup.id },
+            select: { number: true },
+          })
+          // Same final shape as the success path below.
+          return { id: dup.id, number: dup.number, voucherNumber: dupVoucher?.number ?? null }
+        }
+      }
+      throw e
+    }
 
     return {
       id: created.invoice.id,

@@ -4,6 +4,42 @@ import type { SessionUser } from '@/lib/types'
 import { isAdmin, isStaff } from '@/lib/auth'
 import { db } from '@/lib/db'
 import { createHash } from 'node:crypto'
+import { Prisma } from '@prisma/client'
+
+/**
+ * MONEY PRECISION BOUNDARY (docs/DATABASE-MIGRATION.md → PHASE 3).
+ * The database stores every money column as DECIMAL(14,2) and quantities as
+ * DECIMAL(14,3) — exact base-10, no float drift. Prisma returns those columns
+ * as Decimal objects; the API contract must stay NUMERIC for the existing
+ * frontend, so every response crosses this conversion layer exactly once:
+ *
+ *   DB DECIMAL  →  domain math (number, round2)  →  decToNum  →  JSON number
+ *
+ * Number(Decimal) is exact for all supported magnitudes (|x| ≤ 1e9, ≤ 3dp —
+ * far below 2^53). Plain-JSON values (strings, booleans, dates, nulls, ids)
+ * pass through untouched.
+ */
+export function decToNum<T>(value: T): T {
+  if (value instanceof Prisma.Decimal) return Number(value) as T
+  if (Array.isArray(value)) {
+    const out = new Array(value.length)
+    for (let i = 0; i < value.length; i++) out[i] = decToNum(value[i])
+    return out as T
+  }
+  if (value instanceof Date) return value
+  if (value !== null && typeof value === 'object') {
+    const src = value as Record<string, unknown>
+    const out: Record<string, unknown> = {}
+    let changed = false
+    for (const k of Object.keys(src)) {
+      const v = decToNum(src[k])
+      if (v !== src[k]) changed = true
+      out[k] = v
+    }
+    return (changed ? out : value) as T
+  }
+  return value
+}
 
 /**
  * Thrown when an operation is valid per-field but conflicts with concurrent
@@ -31,7 +67,7 @@ export class InsufficientStockError extends Error {
 }
 
 export function ok<T>(data: T, init?: ResponseInit) {
-  return NextResponse.json({ data }, init)
+  return NextResponse.json({ data: decToNum(data) }, init)
 }
 
 export function bad(message: string, status = 400) {
@@ -218,29 +254,41 @@ export function clientIp(req: NextRequest): string {
 // victim's correct-password attempt skips this path entirely.
 
 const LOGIN_WINDOW_MS = 5 * 60_000
-/** Max failed attempts per account per window (10th failure still 401, 11th → 429). */
+/** Max failed attempts per ACCOUNT per window (10th failure still 401, 11th → 429). */
 export const LOGIN_ACCT_MAX = 10
+/** Max failed attempts per IP per window (distributed brute-force damper). */
+export const LOGIN_IP_MAX = 20
 /** Ledger rows older than this are useless — purged opportunistically. */
 const LOGIN_LEDGER_MAX_AGE_MS = 24 * 86_400_000
 let loginLedgerGcCounter = 0
 
+export interface LoginBudget {
+  /** failures for this ACCOUNT are still under the cap */
+  acct: boolean
+  /** failures from this IP are still under the cap */
+  ip: boolean
+}
+
 /**
- * Record a failed login (email-scoped cap; ip stored for forensics only) and
- * report whether the account is still under its failure cap. Returns
- * true = allowed (respond 401), false = over cap (respond 429). The count
- * includes the row just written.
+ * Record a failed login (fail-only: successful logins are never recorded, so
+ * neither an attacker nor a busy NAT office can ever lock a real user out)
+ * and report whether the account AND the ip are still under their failure
+ * caps. The counts include the row just written. Enforcement is DB-backed →
+ * holds across restarts and multiple app instances.
  */
-export async function recordFailedLogin(email: string, ip: string): Promise<boolean> {
+export async function recordFailedLogin(email: string, ip: string): Promise<LoginBudget> {
   await db.loginAttempt.create({ data: { email, ip } }).catch(() => undefined)
   if (++loginLedgerGcCounter % 25 === 0) {
     void db.loginAttempt
       .deleteMany({ where: { createdAt: { lt: new Date(Date.now() - LOGIN_LEDGER_MAX_AGE_MS) } } })
       .catch(() => undefined)
   }
-  const fails = await db.loginAttempt.count({
-    where: { email, createdAt: { gte: new Date(Date.now() - LOGIN_WINDOW_MS) } },
-  })
-  return fails <= LOGIN_ACCT_MAX
+  const since = new Date(Date.now() - LOGIN_WINDOW_MS)
+  const [acctFails, ipFails] = await Promise.all([
+    db.loginAttempt.count({ where: { email, createdAt: { gte: since } } }),
+    db.loginAttempt.count({ where: { ip, createdAt: { gte: since } } }),
+  ])
+  return { acct: acctFails <= LOGIN_ACCT_MAX, ip: ipFails <= LOGIN_IP_MAX }
 }
 
 // ─────────────────────────── idempotency guard ───────────────────────────

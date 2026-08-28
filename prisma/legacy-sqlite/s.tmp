@@ -1,10 +1,9 @@
 generator client {
   provider = "prisma-client-js"
+  output   = "../../node_modules/.prisma/legacy-sqlite-client"
 }
 
-datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  url      = env("LEGACY_DATABASE_URL")
 }
 
 // ============ TENANCY & AUTH ============
@@ -13,10 +12,7 @@ model Org {
   id              String   @id @default(cuid())
   name            String
   currencyCode    String   @default("EGP")
-  // Financial precision: all money columns are DECIMAL — exact base-10 storage
-  // (no float drift). API layer converts Decimal→number at the ok() boundary
-  // so the JSON contract stays numeric (see api-helpers.decToNum).
-  taxPercent      Decimal  @db.Decimal(5, 2) @default(14)
+  taxPercent      Float    @default(14)
   phone           String?
   address         String?
   logo            String? // data:image URL ONLY (policy enforced in settings/org API; remote http URLs rejected)
@@ -153,10 +149,9 @@ model Product {
   category   Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
   unitId     String?
   unit       Unit?     @relation(fields: [unitId], references: [id], onDelete: SetNull)
-  cost       Decimal  @db.Decimal(14, 2) @default(0)
-  price      Decimal  @db.Decimal(14, 2) @default(0)
-  // minQty is a QUANTITY threshold (weight/measure products need decimals), not money.
-  minQty     Decimal  @db.Decimal(14, 3) @default(0)
+  cost       Float    @default(0)
+  price      Float    @default(0)
+  minQty     Float    @default(0)
   trackStock Boolean  @default(true)
   imageUrl   String?
   notes      String?
@@ -196,7 +191,7 @@ model StockLevel {
   product     Product @relation(fields: [productId], references: [id], onDelete: Cascade)
   warehouseId String
   warehouse   Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
-  qty         Decimal  @db.Decimal(14, 3) @default(0)
+  qty         Float  @default(0)
 
   @@unique([productId, warehouseId])
   @@index([warehouseId])
@@ -209,7 +204,7 @@ model StockMovement {
   productId   String
   product     Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
   warehouseId String
-  qty         Decimal // signed delta (+in / -out), DECIMAL(14,3)
+  qty         Float // signed delta (+in / -out)
   kind        String // SALE | PURCHASE | SALE_CANCEL | PURCHASE_CANCEL | ADJUST_IN | ADJUST_OUT | TRANSFER_OUT | TRANSFER_IN | OPENING
   refType     String? // INVOICE | TRANSFER | ADJUSTMENT | OPENING
   refId       String?
@@ -237,7 +232,7 @@ model Customer {
   name           String
   phone          String?
   address        String?
-  openingBalance Decimal  @db.Decimal(14, 2) @default(0) // + means customer owes us
+  openingBalance Float    @default(0) // + means customer owes us
   notes          String?
   createdAt      DateTime @default(now())
 
@@ -254,7 +249,7 @@ model Supplier {
   name           String
   phone          String?
   address        String?
-  openingBalance Decimal  @db.Decimal(14, 2) @default(0) // + means we owe supplier
+  openingBalance Float    @default(0) // + means we owe supplier
   notes          String?
   createdAt      DateTime @default(now())
 
@@ -288,13 +283,13 @@ model Invoice {
   user          User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
   date          DateTime @default(now())
   dueDate       DateTime?
-  subtotal      Decimal  @db.Decimal(14, 2) @default(0)
-  discount      Decimal  @db.Decimal(14, 2) @default(0)
-  taxPercent    Decimal  @db.Decimal(5, 2) @default(0)
-  taxAmount     Decimal  @db.Decimal(14, 2) @default(0)
-  total         Decimal  @db.Decimal(14, 2) @default(0)
-  paidAmount    Decimal  @db.Decimal(14, 2) @default(0)
-  costTotal     Decimal  @db.Decimal(14, 2) @default(0) // snapshot sum(qty*costAtSale) for profit
+  subtotal      Float    @default(0)
+  discount      Float    @default(0)
+  taxPercent    Float    @default(0)
+  taxAmount     Float    @default(0)
+  total         Float    @default(0)
+  paidAmount    Float    @default(0)
+  costTotal     Float    @default(0) // snapshot sum(qty*costAtSale) for profit
   notes         String?
 
   items    InvoiceItem[]
@@ -317,10 +312,10 @@ model InvoiceItem {
   nameSnap    String
   unitSnap    String?
   barcodeSnap String?
-  qty         Decimal  @db.Decimal(14, 3)
-  price       Decimal  @db.Decimal(14, 2)
-  costAtSale  Decimal  @db.Decimal(14, 2) @default(0)
-  total       Decimal  @db.Decimal(14, 2)
+  qty         Float
+  price       Float
+  costAtSale  Float   @default(0)
+  total       Float
 
   @@index([invoiceId])
   @@index([productId])
@@ -334,7 +329,7 @@ model Voucher {
   number      Int
   type        String // RECEIPT | PAYMENT
   method      String   @default("CASH") // CASH | BANK | CARD | WALLET
-  amount      Decimal  @db.Decimal(14, 2)
+  amount      Float
   // Crash-window dedupe anchor (same pattern as Invoice.clientOperationId).
   clientOperationId String?
   partyType   String   @default("OTHER") // CUSTOMER | SUPPLIER | OTHER
@@ -360,7 +355,7 @@ model Expense {
   orgId    String
   org      Org      @relation(fields: [orgId], references: [id], onDelete: Cascade)
   category String   @default("عام")
-  amount   Decimal  @db.Decimal(14, 2)
+  amount   Float
   method   String   @default("CASH")
   note     String?
   userId   String?
@@ -404,7 +399,7 @@ model TransferItem {
   transfer   Transfer @relation(fields: [transferId], references: [id], onDelete: Cascade)
   productId  String
   productName String
-  qty        Decimal  @db.Decimal(14, 3)
+  qty        Float
 
   @@index([transferId])
 }

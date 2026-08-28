@@ -75,3 +75,4 @@ tests/security/*.db
 tests/security/*.db-journal
 # sandbox runtime scripts (not part of the app)
 tests/*.sh
+backups/
