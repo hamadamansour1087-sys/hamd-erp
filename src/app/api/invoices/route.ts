@@ -2,6 +2,7 @@ import { getSession } from '@/lib/auth'
 import {
   ok,
   bad,
+  boundedStr,
   str,
   optStr,
   num,
@@ -33,7 +34,7 @@ export async function GET(req: NextRequest) {
   const customerId = sp.get('customerId') || undefined
   const supplierId = sp.get('supplierId') || undefined
   const warehouseId = sp.get('warehouseId') || undefined
-  const q = str(sp.get('q'))
+  const q = boundedStr(sp.get('q'), 100)
   const from = sp.get('from')
   const to = sp.get('to')
   const page = Math.max(1, Math.floor(num(sp.get('page'), 1)))

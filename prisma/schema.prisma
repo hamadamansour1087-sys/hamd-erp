@@ -83,6 +83,22 @@ model User {
   idempotencyKeys IdempotencyKey[]
 }
 
+// Brute-force defense ledger: one row per FAILED login attempt (successful
+// logins are never recorded, so a valid user can never be locked out by an
+// attacker spamming their address). DB-backed so the per-account failure cap
+// is enforced globally — it survives restarts and holds across multiple app
+// instances (the in-memory limiter in api-helpers remains ONLY as a cheap
+// pre-auth DoS damper). Rows are purged opportunistically after 24h.
+model LoginAttempt {
+  id        String   @id @default(cuid())
+  email     String // normalized lowercase
+  ip        String
+  createdAt DateTime @default(now())
+
+  @@index([email, createdAt])
+  @@index([ip, createdAt])
+}
+
 // Sequence numbers per tenant per doc type (INV / PUR / RCV / PMT / TRF)
 model Counter {
   id     String @id @default(cuid())

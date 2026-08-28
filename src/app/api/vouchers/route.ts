@@ -2,6 +2,7 @@ import { getSession, isStaff } from '@/lib/auth'
 import {
   ok,
   bad,
+  boundedStr,
   str,
   optStr,
   num,
@@ -26,7 +27,7 @@ export async function GET(req: NextRequest) {
   if (!s) return unauthorized()
   const sp = req.nextUrl.searchParams
   const type = sp.get('type') === 'PAYMENT' ? 'PAYMENT' : 'RECEIPT'
-  const q = str(sp.get('q'))
+  const q = boundedStr(sp.get('q'), 100)
   const customerId = sp.get('customerId') || undefined
   const supplierId = sp.get('supplierId') || undefined
   const from = sp.get('from')

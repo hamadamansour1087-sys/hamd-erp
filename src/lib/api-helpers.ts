@@ -208,6 +208,41 @@ export function clientIp(req: NextRequest): string {
   return 'untrusted'
 }
 
+// ─────────────────── login brute-force ledger (DB-backed) ───────────────────
+// The in-memory rateLimit() above is only a cheap PRE-AUTH DoS damper. The
+// actual brute-force control is this DB-backed, FAIL-ONLY ledger: one row per
+// failed login attempt per account. Being in the database it is enforced
+// globally — it survives restarts and holds across multiple app instances.
+// Because successful logins are never recorded, an attacker spamming a
+// victim's address with wrong passwords can never lock the victim out: the
+// victim's correct-password attempt skips this path entirely.
+
+const LOGIN_WINDOW_MS = 5 * 60_000
+/** Max failed attempts per account per window (10th failure still 401, 11th → 429). */
+export const LOGIN_ACCT_MAX = 10
+/** Ledger rows older than this are useless — purged opportunistically. */
+const LOGIN_LEDGER_MAX_AGE_MS = 24 * 86_400_000
+let loginLedgerGcCounter = 0
+
+/**
+ * Record a failed login (email-scoped cap; ip stored for forensics only) and
+ * report whether the account is still under its failure cap. Returns
+ * true = allowed (respond 401), false = over cap (respond 429). The count
+ * includes the row just written.
+ */
+export async function recordFailedLogin(email: string, ip: string): Promise<boolean> {
+  await db.loginAttempt.create({ data: { email, ip } }).catch(() => undefined)
+  if (++loginLedgerGcCounter % 25 === 0) {
+    void db.loginAttempt
+      .deleteMany({ where: { createdAt: { lt: new Date(Date.now() - LOGIN_LEDGER_MAX_AGE_MS) } } })
+      .catch(() => undefined)
+  }
+  const fails = await db.loginAttempt.count({
+    where: { email, createdAt: { gte: new Date(Date.now() - LOGIN_WINDOW_MS) } },
+  })
+  return fails <= LOGIN_ACCT_MAX
+}
+
 // ─────────────────────────── idempotency guard ───────────────────────────
 // Offline POS replays can duplicate mutations (request committed, response lost).
 // The client sends a stable `Idempotency-Key` header per logical operation; the

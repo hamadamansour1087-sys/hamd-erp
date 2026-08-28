@@ -12,7 +12,10 @@ export async function GET(req: NextRequest) {
   const s = await getSession(req)
   if (!s) return unauthorized()
   const sp = req.nextUrl.searchParams
-  const q = str(sp.get('q'))
+  // SEARCH INPUT CAP: q feeds LIKE '%q%' patterns across 4 columns — an
+  // unbounded pattern would let a crafted 100KB query burn query-planning
+  // time per keystroke. 100 chars is far beyond any real product query.
+  const q = boundedStr(sp.get('q'), 100)
   const categoryId = str(sp.get('categoryId'))
   const activeParam = sp.get('active')
   const page = Math.max(1, Math.floor(num(sp.get('page'), 1)))

@@ -16,6 +16,9 @@
  *  - H11 invoice item qty 1e12 → 400
  *  - H12 voucher date year-9999 → clamped into [2000, 2100]
  *  - H13 product still holding stock → soft-delete (deactivated), never raw FK 500
+ *  - H14 search q > 100 chars → truncated (capped pattern still matches), no 500
+ *  - H15 login brute-force ledger (DB-backed, fail-only): 11th fail → 429,
+ *       correct password never locked out, failures recorded in LoginAttempt
  */
 import { execSync } from 'node:child_process'
 import path from 'node:path'
@@ -36,6 +39,7 @@ const invoicesRoute = await import('@/app/api/invoices/route')
 const usersRoute = await import('@/app/api/users/route')
 const userIdRoute = await import('@/app/api/users/[id]/route')
 const settingsOrgRoute = await import('@/app/api/settings/org/route')
+const loginRoute = await import('@/app/api/auth/login/route')
 
 const { NextRequest } = await import('next/server')
 
@@ -91,6 +95,7 @@ beforeAll(async () => {
     stdio: 'pipe',
   })
   await db.idempotencyKey.deleteMany()
+  await db.loginAttempt.deleteMany()
   await db.voucher.deleteMany()
   await db.invoiceItem.deleteMany()
   await db.invoice.deleteMany()
@@ -433,4 +438,102 @@ test('H13. product with live stock levels → DELETE deactivates (no FK 500)', a
   expect(del.json.data.deactivated).toBe(true)
   const stillThere = await db.product.findUnique({ where: { id }, select: { active: true } })
   expect(stillThere?.active).toBe(false)
+})
+
+// ─────────── H14: search input cap (defense-in-depth on LIKE patterns) ───────────
+test('H14. product search: q capped at 100 chars (observable via contains semantics)', async () => {
+  // Product name = 110 'x' chars. Searching 120 'x' chars:
+  //   WITHOUT the cap → contains('%x×120%') cannot match a 110-char name → miss
+  //   WITH the cap    → q is truncated to 100 'x' chars → 110-char name matches → hit
+  // The hit therefore PROVES the cap is applied to the query pattern.
+  const longName = 'x'.repeat(110)
+  const created = await json(
+    await productsRoute.POST(
+      makeReq('/api/products', {
+        method: 'POST',
+        session: adminSess(),
+        body: { name: longName },
+      })
+    )
+  )
+  expect(created.status).toBe(200)
+
+  const hit = await json(
+    await productsRoute.GET(makeReq(`/api/products?q=${encodeURIComponent('x'.repeat(120))}`, { session: adminSess() }))
+  )
+  expect(hit.status).toBe(200)
+  expect(hit.json.data.rows.some((r: { name: string }) => r.name === longName)).toBe(true)
+
+  // sanity: normal short search still works (fast-path exact miss → LIKE scan)
+  const normal = await json(
+    await productsRoute.POST(
+      makeReq('/api/products', {
+        method: 'POST',
+        session: adminSess(),
+        body: { name: 'ZebraCap UniqueWidget' },
+      })
+    )
+  )
+  expect(normal.status).toBe(200)
+  const found = await json(
+    await productsRoute.GET(makeReq('/api/products?q=ZebraCap', { session: adminSess() }))
+  )
+  expect(found.status).toBe(200)
+  expect(found.json.data.rows.some((r: { name: string }) => r.name === 'ZebraCap UniqueWidget')).toBe(true)
+
+  // absurd 5KB query → bounded, 200, no crash
+  const flood = 'q'.repeat(5000)
+  const floodRes = await json(
+    await productsRoute.GET(makeReq(`/api/products?q=${encodeURIComponent(flood)}`, { session: adminSess() }))
+  )
+  expect(floodRes.status).toBe(200)
+  expect(Array.isArray(floodRes.json.data.rows)).toBe(true)
+})
+
+// ─────────── H15: DB-backed fail-only login brute-force ledger ───────────
+test('H15. login ledger: 10 fails → 401, 11th → 429; correct password never locked out', async () => {
+  // a) unknown account hammered with wrong passwords → rows land in the DB
+  const codes: number[] = []
+  for (let i = 0; i < 11; i++) {
+    const r = await json(
+      await loginRoute.POST(
+        makeReq('/api/auth/login', {
+          method: 'POST',
+          body: { email: 'ghost@hard.test', password: `wrong-pass-${i}` },
+        })
+      )
+    )
+    codes.push(r.status)
+  }
+  expect(codes.slice(0, 10).every((c) => c === 401)).toBe(true)
+  expect(codes[10]).toBe(429)
+  // the ledger itself is the enforcement store — 11 failures persisted
+  expect(await db.loginAttempt.count({ where: { email: 'ghost@hard.test' } })).toBe(11)
+
+  // b) FAIL-ONLY property: a real account with failures on record is NOT
+  // locked out — its correct-password attempt never touches the limiter path.
+  for (let i = 0; i < 3; i++) {
+    const r = await json(
+      await loginRoute.POST(
+        makeReq('/api/auth/login', {
+          method: 'POST',
+          body: { email: 'admin-a@hard.test', password: 'not-the-pass' },
+        })
+      )
+    )
+    expect(r.status).toBe(401)
+  }
+  const good = await json(
+    await loginRoute.POST(
+      makeReq('/api/auth/login', {
+        method: 'POST',
+        body: { email: 'admin-a@hard.test', password: 'hardening-pass-123' },
+      })
+    )
+  )
+  expect(good.status).toBe(200)
+  expect(good.json.data.user.email).toBe('admin-a@hard.test')
+
+  // keep the fixture tidy for any later assertions
+  await db.loginAttempt.deleteMany({})
 })

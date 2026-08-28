@@ -2,7 +2,7 @@ import { getSession, isStaff } from '@/lib/auth'
 import { NextRequest } from 'next/server'
 import { db } from '@/lib/db'
 
-import { unauthorized } from '@/lib/api-helpers'
+import { unauthorized, boundedStr } from '@/lib/api-helpers'
 import {
   ok,
   bad,
@@ -24,7 +24,7 @@ export async function GET(req: NextRequest) {
   const sp = req.nextUrl.searchParams
   const from = sp.get('from')
   const to = sp.get('to')
-  const q = str(sp.get('q'))
+  const q = boundedStr(sp.get('q'), 100)
   const page = Math.max(1, Math.floor(num(sp.get('page'), 1)))
   const pageSize = Math.min(200, Math.max(5, Math.floor(num(sp.get('pageSize'), 25))))
 
