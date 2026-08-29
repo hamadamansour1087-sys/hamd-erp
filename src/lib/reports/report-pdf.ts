@@ -32,10 +32,18 @@ export interface PdfReportModel {
  * Remote http(s) logos are rejected everywhere — no client-side fetch of
  * user-provided URLs, and the CSP (img-src 'self' data: blob:) blocks them
  * at the browser level too.
+ *
+ * STRICT server-parity allowlist (mirrors settings/org PUT): raster formats
+ * only, mandatory base64 payload, hard length cap. A bare
+ * startsWith('data:image/') would let a stored value like
+ * `data:image/png,1" onerror="...` pass this check and ESCAPE the src
+ * attribute in the <img> below — a stored XSS executed on every report the
+ * org prints. The base64 charset test guarantees no quotes/spaces can ever
+ * appear in the returned URL; the attribute template escapes it anyway.
  */
 function toDataUrl(url: string | null | undefined): string | null {
-  if (url && url.startsWith('data:image/')) return url
-  return null
+  if (!url || url.length > 600_000) return null
+  return /^data:image\/(png|jpe?g|webp|gif);base64,[A-Za-z0-9+/=]+$/.test(url) ? url : null
 }
 
 function buildContainer(model: PdfReportModel, logoUrl: string | null): HTMLDivElement {
@@ -73,8 +81,10 @@ function buildContainer(model: PdfReportModel, logoUrl: string | null): HTMLDivE
     )
     .join('')
 
+  // esc(logoUrl): belt-and-braces — toDataUrl's charset allowlist already
+  // excludes quotes, but the attribute must never trust that upstream.
   const logoHtml = logoUrl
-    ? `<img class="logo" src="${logoUrl}" alt="" />`
+    ? `<img class="logo" src="${esc(logoUrl)}" alt="" />`
     : `<div class="mark">H</div>`
   const contact = [model.phone, model.address].filter(Boolean).join(' · ')
 

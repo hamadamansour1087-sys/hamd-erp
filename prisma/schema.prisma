@@ -283,7 +283,10 @@ model Invoice {
   supplierId    String?
   supplier      Supplier? @relation(fields: [supplierId], references: [id], onDelete: SetNull)
   warehouseId   String?
-  warehouse     Warehouse? @relation(fields: [warehouseId], references: [id], onDelete: SetNull)
+  // RESTRICT (not SetNull): a warehouse referenced by an invoice is part of
+  // the financial record — deleting it must hard-fail, never silently NULL
+  // the attribution. Covers the check-then-delete race in the DELETE route.
+  warehouse     Warehouse? @relation(fields: [warehouseId], references: [id], onDelete: Restrict)
   userId        String?
   user          User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
   date          DateTime @default(now())
@@ -382,9 +385,12 @@ model Transfer {
   org              Org      @relation(fields: [orgId], references: [id], onDelete: Cascade)
   number           Int
   fromWarehouseId  String
-  fromWarehouse    Warehouse @relation("fromWarehouse", fields: [fromWarehouseId], references: [id], onDelete: Cascade)
+  // RESTRICT: transfers are stock-ledger history. Cascading them away (or
+  // nulling their legs) when a warehouse is deleted would silently destroy
+  // the audit trail; deletion must be refused instead.
+  fromWarehouse    Warehouse @relation("fromWarehouse", fields: [fromWarehouseId], references: [id], onDelete: Restrict)
   toWarehouseId    String
-  toWarehouse      Warehouse @relation("toWarehouse", fields: [toWarehouseId], references: [id], onDelete: Cascade)
+  toWarehouse      Warehouse @relation("toWarehouse", fields: [toWarehouseId], references: [id], onDelete: Restrict)
   note             String?
   userId           String?
   createdAt        DateTime @default(now())

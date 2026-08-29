@@ -114,13 +114,18 @@ export async function POST(req: NextRequest) {
 
   // TENANT-SAFETY: party references must belong to the caller's org. The FK
   // alone would happily accept another tenant's id (existence ≠ ownership).
+  // The DB name is captured here too — it is the authoritative party snapshot
+  // (anti-spoofing): a client-supplied partyName must never override it.
+  let linkedPartyName: string | null = null
   if (customerId) {
-    const c = await db.customer.findFirst({ where: { id: customerId, orgId: s.orgId }, select: { id: true } })
+    const c = await db.customer.findFirst({ where: { id: customerId, orgId: s.orgId }, select: { name: true } })
     if (!c) return bad('customer-not-found')
+    linkedPartyName = c.name
   }
   if (supplierId) {
-    const sup = await db.supplier.findFirst({ where: { id: supplierId, orgId: s.orgId }, select: { id: true } })
+    const sup = await db.supplier.findFirst({ where: { id: supplierId, orgId: s.orgId }, select: { name: true } })
     if (!sup) return bad('supplier-not-found')
+    linkedPartyName = sup.name
   }
 
   // Validate the linked invoice up-front (existence/type/state) — the money math
@@ -146,23 +151,22 @@ export async function POST(req: NextRequest) {
       })
       const number = c.next - 1 || 1
 
-      let partyName = boundedStr(optStr(body.partyName) ?? '', 200) || null
-      let partyType: string = str(body.partyType) || 'OTHER'
-      if (!['CUSTOMER', 'SUPPLIER', 'OTHER'].includes(partyType)) partyType = 'OTHER'
-      if (customerId) {
-        partyType = 'CUSTOMER'
-        if (!partyName) {
-          const cust = await db.customer.findFirst({ where: { id: customerId, orgId: s.orgId }, select: { name: true } })
-          partyName = cust?.name ?? null
-        }
-      }
-      if (supplierId) {
-        partyType = 'SUPPLIER'
-        if (!partyName) {
-          const sup = await db.supplier.findFirst({ where: { id: supplierId, orgId: s.orgId }, select: { name: true } })
-          partyName = sup?.name ?? null
-        }
-      }
+      // PARTY-NAME ANTI-SPOOFING: when a party is linked, the DB name is the
+      // voucher's identity — a client-supplied partyName used to override it,
+      // letting a cashier print a receipt "from" any party label. Free text is
+      // honored only for walk-in (no-party) vouchers.
+      // partyType normalization preserved verbatim from the prior behavior
+      // (linked party wins; SUPPLIER takes precedence if both ids are sent).
+      const partyType: string = supplierId
+        ? 'SUPPLIER'
+        : customerId
+          ? 'CUSTOMER'
+          : (() => {
+              const t = str(body.partyType) || 'OTHER'
+              return ['CUSTOMER', 'SUPPLIER', 'OTHER'].includes(t) ? t : 'OTHER'
+            })()
+      const freeName = boundedStr(optStr(body.partyName) ?? '', 200) || null
+      const partyName = linkedPartyName ?? freeName
 
       // PG-SAFE CRASH-WINDOW DEDUPE: a P2002 aborts a PostgreSQL transaction
       // (25P02 on any later statement), so the committed-duplicate resolution

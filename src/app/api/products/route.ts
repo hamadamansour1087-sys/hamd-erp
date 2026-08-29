@@ -121,6 +121,15 @@ export async function POST(req: NextRequest) {
     ? body.openingQty.filter((o: { warehouseId?: unknown }) => typeof o?.warehouseId === 'string')
     : []
   if (openings.length > 50) return bad('too-many-openings')
+  // NO SILENT SKIPS: an opening entry pointing at an unknown/foreign warehouse
+  // or carrying a non-positive qty used to be dropped with `continue` — the
+  // operator believed opening stock was recorded while the ledger said
+  // otherwise. Validate everything up-front and fail loudly instead.
+  for (const o of openings) {
+    const wh = await db.warehouse.findFirst({ where: { id: o.warehouseId, orgId: s.orgId }, select: { id: true } })
+    if (!wh) return bad('opening-warehouse-not-found')
+    if (!(qtyVal(o.qty, 0) > 0)) return bad('invalid-opening-qty')
+  }
 
   const created = await db.$transaction(async (tx) => {
     try {
@@ -144,10 +153,8 @@ export async function POST(req: NextRequest) {
         },
       })
       for (const o of openings) {
-        const wh = await tx.warehouse.findFirst({ where: { id: o.warehouseId, orgId: s.orgId }, select: { id: true } })
-        if (!wh) continue
+        // (pre-validated above: in-org warehouse, positive qty — no skips)
         const qty = qtyVal(o.qty, 0)
-        if (qty <= 0) continue // openings are balances brought IN; clamp negatives/zero
         await tx.stockLevel.upsert({
           where: { productId_warehouseId: { productId: product.id, warehouseId: o.warehouseId } },
           create: { productId: product.id, warehouseId: o.warehouseId, qty },

@@ -1,5 +1,5 @@
 import { getSession, hashPasswordAsync, MAX_PASSWORD_LEN } from '@/lib/auth'
-import { ok, bad, str, unauthorized, forbidden, boundedStr, isUniqueViolation, readJson } from '@/lib/api-helpers'
+import { ok, bad, str, unauthorized, forbidden, boundedStr, isUniqueViolation, readJson, rateLimit, tooMany, clientIp } from '@/lib/api-helpers'
 import { NextRequest } from 'next/server'
 import { db } from '@/lib/db'
 
@@ -23,6 +23,10 @@ export async function POST(req: NextRequest) {
   const s = await getSession(req)
   if (!s) return unauthorized()
   if (s.role !== 'ADMIN') return forbidden()
+  // Enumeration damper: emails are globally unique by design, so the
+  // 'email-taken' answer inevitably leaks "this email exists somewhere". Cap
+  // how often an account can probe that signal through the invite endpoint.
+  if (!rateLimit(`users:invite:${clientIp(req)}`, 20, 5 * 60_000)) return tooMany()
   const body = await readJson(req)
   const name = boundedStr(body.name, 200)
   const email = boundedStr(str(body.email).toLowerCase(), 200)
@@ -33,9 +37,10 @@ export async function POST(req: NextRequest) {
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return bad('invalid-email')
   if (password.length > MAX_PASSWORD_LEN) return bad('weak-password')
 
-  const exists = await db.user.findUnique({ where: { email }, select: { id: true } })
-  if (exists) return bad('email-taken')
-
+  // No find-first pre-check: emails are GLOBALLY unique, so the pre-check both
+  // raced concurrent invites and served as a cheap cross-org enumeration
+  // oracle. The DB unique constraint is the source of truth — the catch below
+  // answers the identical 400 'email-taken' either way.
   try {
     const row = await db.user.create({
       data: { orgId: s.orgId, name, email, passwordHash: await hashPasswordAsync(password), role },
@@ -43,8 +48,7 @@ export async function POST(req: NextRequest) {
     })
     return ok(row)
   } catch (e) {
-    // Race: two concurrent invites for the same email — the pre-check above is
-    // advisory; the DB unique constraint is the source of truth. 400, not 500.
+    // Race / duplicate: the DB unique constraint decides. 400, not 500.
     if (isUniqueViolation(e)) return bad('email-taken')
     throw e
   }

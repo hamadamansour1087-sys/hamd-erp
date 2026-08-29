@@ -42,7 +42,12 @@ export async function POST(req: NextRequest) {
       where: { email },
       include: { org: true },
     })
-    if (!user || !user.active || !(await verifyPasswordAsync(password, user.passwordHash))) {
+    // Timing-equalize across ALL failure shapes: an existing-but-DISABLED
+    // account must burn the same scrypt cost as an active one. Short-circuiting
+    // on !active (skipping the KDF) made the fast response a boolean oracle
+    // revealing whether an email belongs to a disabled account.
+    const verified = user ? await verifyPasswordAsync(password, user.passwordHash) : false
+    if (!user || !user.active || !verified) {
       // Timing-equalize: always run one scrypt verification, even for unknown emails.
       if (!user) await verifyPasswordAsync(password, DUMMY_HASH)
       // DB-backed FAIL-ONLY caps (multi-instance-safe, survives restarts):
