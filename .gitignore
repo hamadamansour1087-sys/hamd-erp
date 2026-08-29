@@ -76,3 +76,6 @@ tests/security/*.db-journal
 # sandbox runtime scripts (not part of the app)
 tests/*.sh
 backups/
+
+# IM uploads (sandbox artifacts, not for the repo)
+/upload/

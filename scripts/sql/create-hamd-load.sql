@@ -1,0 +1,1 @@
+CREATE DATABASE hamd_load;
