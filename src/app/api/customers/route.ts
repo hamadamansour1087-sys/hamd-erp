@@ -5,20 +5,32 @@ import { db } from '@/lib/db'
 import { unauthorized, boundedStr, readJson } from '@/lib/api-helpers'
 import { ok, bad, str, optStr, signedMoney, round2, forbidden } from '@/lib/api-helpers'
 
+/** Hard result cap — well above SMB scale, but never unbounded. */
+const LIST_TAKE = 2000
+
 /** GET /api/customers?q= */
 export async function GET(req: NextRequest) {
   const s = await getSession(req)
   if (!s) return unauthorized()
   const q = boundedStr(req.nextUrl.searchParams.get('q'), 100)
-  const rows = await db.customer.findMany({
-    where: {
-      orgId: s.orgId,
-      ...(q ? { OR: [{ name: { contains: q, mode: 'insensitive' } }, { phone: { contains: q } }] } : {}),
-    },
-    orderBy: { createdAt: 'desc' },
-    take: 2000,
-  })
-  return ok(rows)
+  const [rows, total] = await Promise.all([
+    db.customer.findMany({
+      where: {
+        orgId: s.orgId,
+        ...(q ? { OR: [{ name: { contains: q, mode: 'insensitive' } }, { phone: { contains: q } }] } : {}),
+      },
+      orderBy: { createdAt: 'desc' },
+      take: LIST_TAKE,
+    }),
+    db.customer.count({ where: { orgId: s.orgId } }),
+  ])
+  // NON-SILENT TRUNCATION: when the hard cap clipped the result the client is
+  // told via headers (body shape stays a plain array — no frontend breakage).
+  // X-Truncated: 1 signals "filter or export instead of paging this list".
+  const res = ok(rows)
+  res.headers.set('X-Total-Count', String(total))
+  if (rows.length >= LIST_TAKE && total > rows.length) res.headers.set('X-Truncated', '1')
+  return res
 }
 
 /**

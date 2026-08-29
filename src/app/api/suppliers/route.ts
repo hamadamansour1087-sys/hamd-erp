@@ -5,20 +5,31 @@ import { db } from '@/lib/db'
 import { unauthorized, boundedStr, readJson } from '@/lib/api-helpers'
 import { ok, bad, str, optStr, signedMoney, round2, forbidden } from '@/lib/api-helpers'
 
+/** Hard result cap — well above SMB scale, but never unbounded. */
+const LIST_TAKE = 2000
+
 /** GET /api/suppliers?q= */
 export async function GET(req: NextRequest) {
   const s = await getSession(req)
   if (!s) return unauthorized()
   const q = boundedStr(req.nextUrl.searchParams.get('q'), 100)
-  const rows = await db.supplier.findMany({
-    where: {
-      orgId: s.orgId,
-      ...(q ? { OR: [{ name: { contains: q, mode: 'insensitive' } }, { phone: { contains: q } }] } : {}),
-    },
-    orderBy: { createdAt: 'desc' },
-    take: 2000,
-  })
-  return ok(rows)
+  const [rows, total] = await Promise.all([
+    db.supplier.findMany({
+      where: {
+        orgId: s.orgId,
+        ...(q ? { OR: [{ name: { contains: q, mode: 'insensitive' } }, { phone: { contains: q } }] } : {}),
+      },
+      orderBy: { createdAt: 'desc' },
+      take: LIST_TAKE,
+    }),
+    db.supplier.count({ where: { orgId: s.orgId } }),
+  ])
+  // NON-SILENT TRUNCATION (same contract as GET /api/customers): headers tell
+  // the client the list was clipped without changing the JSON body shape.
+  const res = ok(rows)
+  res.headers.set('X-Total-Count', String(total))
+  if (rows.length >= LIST_TAKE && total > rows.length) res.headers.set('X-Truncated', '1')
+  return res
 }
 
 /**

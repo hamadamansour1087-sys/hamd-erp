@@ -228,6 +228,14 @@ export async function POST(req: NextRequest) {
     if (e instanceof OperationConflictError && (e.message === 'lock-busy' || e.message === 'lock-queue-full')) {
       return bad('busy-try-again', 409)
     }
+    // CAS exhaustion (10 recomputed deltas in a row all lost their race — only
+    // possible under sustained cross-replica writes to the same stock row).
+    // The tx rolled back clean, so this is a RETRYABLE conflict, not a server
+    // error: answer 409 (client retries with the same Idempotency-Key) instead
+    // of an opaque 500.
+    if (e instanceof Error && e.message === 'stock-qty-conflict') {
+      return bad('stock-qty-conflict', 409)
+    }
     throw e
   }
 

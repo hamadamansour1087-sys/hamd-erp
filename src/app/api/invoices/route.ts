@@ -369,10 +369,14 @@ export async function POST(req: NextRequest) {
       })),
     })
 
-    // latest purchase updates product cost (tenant-scoped write)
+    // latest purchase updates product cost (tenant-scoped write). Duplicate
+    // lines of the SAME product collapse into one UPDATE per product — the
+    // last line wins, matching the previous per-row loop's outcome exactly.
     if (type === 'PURCHASE') {
-      for (const it of normItems) {
-        await tx.product.updateMany({ where: { id: it.productId, orgId: s.orgId }, data: { cost: it.price } })
+      const costByProduct = new Map<string, number>()
+      for (const it of normItems) costByProduct.set(it.productId, it.price)
+      for (const [productId, price] of costByProduct) {
+        await tx.product.updateMany({ where: { id: productId, orgId: s.orgId }, data: { cost: price } })
       }
     }
 
