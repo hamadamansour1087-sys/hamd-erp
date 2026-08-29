@@ -3,7 +3,7 @@ import { NextRequest } from 'next/server'
 import { db } from '@/lib/db'
 
 import { unauthorized, boundedStr } from '@/lib/api-helpers'
-import { ok, bad, str, forbidden } from '@/lib/api-helpers'
+import { ok, bad, str, forbidden, readJson } from '@/lib/api-helpers'
 
 /** GET /api/categories — list tenant categories (read: all roles) */
 export async function GET(req: NextRequest) {
@@ -27,9 +27,13 @@ export async function POST(req: NextRequest) {
   const s = await getSession(req)
   if (!s) return unauthorized()
   if (!isStaff(s)) return forbidden()
-  const body = await req.json().catch(() => ({}))
+  const body = await readJson(req)
   const name = boundedStr(body.name, 200)
   if (!name) return bad('name-required')
+  // Sort order must be a bounded safe integer — 1e999 parses to Infinity and
+  // a NaN/garbage value would crash the Int column (unhandled 500).
+  const rawSort = typeof body.sort === 'number' ? body.sort : NaN
+  const sort = Number.isSafeInteger(rawSort) && rawSort >= 0 && rawSort <= 1_000_000 ? rawSort : null
   const max = await db.category.aggregate({
     where: { orgId: s.orgId },
     _max: { sort: true },
@@ -38,7 +42,7 @@ export async function POST(req: NextRequest) {
     data: {
       orgId: s.orgId,
       name,
-      sort: typeof body.sort === 'number' ? body.sort : (max._max.sort ?? 0) + 1,
+      sort: sort ?? (max._max.sort ?? 0) + 1,
     },
   })
   return ok(row)

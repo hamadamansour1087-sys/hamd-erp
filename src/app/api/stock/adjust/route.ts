@@ -8,33 +8,28 @@ import {
   bad,
   str,
   optStr,
+  boundedStr,
   round2,
+  round3,
   forbidden,
+  readJson,
+  withDbRetry,
+  MAX_QTY,
   withIdempotency,
   okIdempotent,
   isUniqueViolation,
+  OperationConflictError,
 } from '@/lib/api-helpers'
+import { globalMutex } from '@/lib/locks'
 
 /**
- * In-process keyed mutex — serializes stock adjustments per (product, warehouse).
- * SQLite allows a single writer; concurrent interactive transactions would
- * otherwise queue on the database write lock (and can exceed Prisma's 5s
- * transaction timeout under burst). The mutex removes the contention in this
- * single-process deployment; the CAS retry inside remains the correctness
- * backstop (e.g. multiple worker processes) and guarantees the ledger can
- * never diverge from StockLevel.qty.
+ * In-process keyed mutex WITH A WAIT BUDGET (timeout + queue cap) — serializes
+ * stock adjustments per (product, warehouse). The CAS retry inside remains the
+ * correctness backstop (multiple worker processes / lock timeout) and
+ * guarantees the ledger can never diverge from StockLevel.qty. A hung holder
+ * no longer piles up waiters forever: they abort with 409 lock-busy.
  */
-const stockLocks = new Map<string, Promise<unknown>>()
-async function withStockLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
-  const prev = stockLocks.get(key) ?? Promise.resolve()
-  const next = prev.catch(() => undefined).then(fn)
-  stockLocks.set(key, next)
-  try {
-    return await next
-  } finally {
-    if (stockLocks.get(key) === next) stockLocks.delete(key)
-  }
-}
+const stockMutex = globalMutex
 
 type AdjustOutcome = {
   id: string
@@ -90,7 +85,7 @@ export async function POST(req: NextRequest) {
   if (!s) return unauthorized()
   // Authorization (server-side): stock adjustments are a management operation.
   if (!isStaff(s)) return forbidden()
-  const body = await req.json().catch(() => ({}))
+  const body = await readJson(req)
   const warehouseId = str(body.warehouseId)
   const productId = str(body.productId)
   if (!warehouseId || !productId) return bad('missing-fields')
@@ -102,16 +97,20 @@ export async function POST(req: NextRequest) {
   if (!wh || !product) return bad('not-found', 404)
 
   if (body.newQty === undefined || body.newQty === null) return bad('qty-invalid')
-  const newQty = round2(Number(body.newQty))
-  if (!Number.isFinite(newQty) || newQty < 0) return bad('qty-invalid')
-  const reason = optStr(body.reason)
+  // round3 matches the DECIMAL(14,3) qty column (round2 silently dropped the
+  // third decimal a POS scale could legitimately produce).
+  const newQty = round3(Number(body.newQty))
+  if (!Number.isFinite(newQty) || newQty < 0 || newQty > MAX_QTY) return bad('qty-invalid')
+  const reason = boundedStr(optStr(body.reason) ?? '', 500) || null
 
-  const result = await withIdempotency(req, s, 'stock-adjust', async (clientOpId) => {
-  const adjusted = await withStockLock(`${productId}:${warehouseId}`, async (): Promise<AdjustOutcome> => {
+  let result
+  try {
+    result = await withIdempotency(req, s, 'stock-adjust', async (clientOpId) => {
+  const adjusted = await stockMutex.run(`adjust:${productId}:${warehouseId}`, async (): Promise<AdjustOutcome> => {
     let lastError: unknown
     for (let txTry = 0; txTry < 3; txTry++) {
       try {
-      return await db.$transaction(async (tx) => {
+      return await withDbRetry(() => db.$transaction(async (tx) => {
         // CRASH-WINDOW DEDUPE (pre-check): if a previous attempt of THIS
         // logical operation already committed its movement, it is already
         // applied — return it without touching StockLevel, even if other
@@ -202,9 +201,9 @@ export async function POST(req: NextRequest) {
             })
             return { id: movement.id, changed: true, alreadyApplied: false, oldQty, newQty }
           }
-          if (attempt >= 5) throw new Error('stock-qty-conflict')
+          if (attempt >= 10) throw new Error('stock-qty-conflict')
         }
-      })
+      }))
       } catch (e) {
         lastError = e
         // BACKSTOP (PostgreSQL-safe): the tx (including its StockLevel write)
@@ -221,8 +220,18 @@ export async function POST(req: NextRequest) {
     }
     throw lastError
   })
-  return adjusted
+    return adjusted
   })
+  } catch (e) {
+    // Mutex wait-budget aborts (holder hung / queue full) — the idempotency
+    // claim was already released, so the client can retry safely.
+    if (e instanceof OperationConflictError && (e.message === 'lock-busy' || e.message === 'lock-queue-full')) {
+      return bad('busy-try-again', 409)
+    }
+    throw e
+  }
 
   return okIdempotent(result)
 }
+
+

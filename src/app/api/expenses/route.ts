@@ -2,7 +2,7 @@ import { getSession, isStaff } from '@/lib/auth'
 import { NextRequest } from 'next/server'
 import { db } from '@/lib/db'
 
-import { unauthorized, boundedStr } from '@/lib/api-helpers'
+import { unauthorized, boundedStr, readJson } from '@/lib/api-helpers'
 import {
   ok,
   bad,
@@ -12,6 +12,7 @@ import {
   forbidden,
   money,
   round2,
+  safeDate,
   withIdempotency,
   okIdempotent,
   isUniqueViolation,
@@ -34,7 +35,7 @@ export async function GET(req: NextRequest) {
   if (to && !isNaN(new Date(to).getTime())) range.lte = new Date(new Date(to).getTime() + 86_399_000)
   if (Object.keys(range).length) where.date = range
   if (q) {
-    where.OR = [{ category: { contains: q } }, { note: { contains: q } }]
+    where.OR = [{ category: { contains: q, mode: 'insensitive' } }, { note: { contains: q, mode: 'insensitive' } }]
   }
 
   const [total, rows, categoriesRaw] = await Promise.all([
@@ -67,7 +68,7 @@ export async function POST(req: NextRequest) {
   if (!s) return unauthorized()
   // Authorization (server-side): expenses are a management operation.
   if (!isStaff(s)) return forbidden()
-  const body = await req.json().catch(() => ({}))
+  const body = await readJson(req)
   const amount = round2(money(body.amount, 0))
   if (!(amount > 0)) return bad('amount-required')
   const method = ['CASH', 'BANK', 'CARD', 'WALLET'].includes(str(body.method)) ? str(body.method) : 'CASH'
@@ -85,10 +86,9 @@ export async function POST(req: NextRequest) {
           note: optStr(body.note)?.slice(0, 500),
           userId: s.id,
           clientOperationId: clientOpId,
-          date:
-            typeof body.date === 'string' && !isNaN(new Date(body.date).getTime())
-              ? new Date(body.date)
-              : new Date(),
+          // safeDate bounds [2000, 2100] — a year-9999 expense poisons period
+          // reports; unparseable dates fall back to now (previous behavior).
+          date: safeDate(body.date) ?? new Date(),
         },
       })
       return row

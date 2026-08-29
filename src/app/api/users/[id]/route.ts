@@ -1,5 +1,5 @@
-import { getSession, hashPasswordAsync } from '@/lib/auth'
-import { ok, bad, str, unauthorized, forbidden, isUniqueViolation, OperationConflictError } from '@/lib/api-helpers'
+import { getSession, hashPasswordAsync, MAX_PASSWORD_LEN } from '@/lib/auth'
+import { ok, bad, str, boundedStr, unauthorized, forbidden, isUniqueViolation, OperationConflictError, readJson } from '@/lib/api-helpers'
 import { NextRequest } from 'next/server'
 import { db } from '@/lib/db'
 
@@ -35,10 +35,10 @@ export async function PUT(req: NextRequest, ctx: { params: Promise<{ id: string 
   const target = await db.user.findFirst({ where: { id, orgId: s.orgId } })
   if (!target) return bad('not-found', 404)
 
-  const body = await req.json().catch(() => ({}))
+  const body = await readJson(req)
   const data: Record<string, unknown> = {}
 
-  if (str(body.name)) data.name = str(body.name)
+  if (str(body.name)) data.name = boundedStr(str(body.name), 200)
 
   if (body.role !== undefined) {
     const role = str(body.role)
@@ -56,7 +56,7 @@ export async function PUT(req: NextRequest, ctx: { params: Promise<{ id: string 
   // Password change or deactivation must invalidate the target's existing sessions.
   let revokeSessions = false
   if (typeof body.password === 'string' && body.password.length > 0) {
-    if (body.password.length < 6) return bad('weak-password')
+    if (body.password.length < 6 || body.password.length > MAX_PASSWORD_LEN) return bad('weak-password')
     data.passwordHash = await hashPasswordAsync(body.password)
     revokeSessions = true
   }
@@ -77,6 +77,16 @@ export async function PUT(req: NextRequest, ctx: { params: Promise<{ id: string 
     const updated = await withAdminLock(s.orgId, () =>
       db.$transaction(async (tx) => {
       if (removesAdminRole) {
+        // CROSS-INSTANCE SERIALIZATION: a PostgreSQL transaction-scoped
+        // advisory lock on the org. The in-process mutex alone cannot see
+        // another INSTANCE's concurrent demotion — two instances demoting the
+        // org's two admins on different rows both passed the old guard and
+        // committed, leaving zero admins. The advisory lock serializes the
+        // whole pre-check → write → recheck sequence per org DATABASE-WIDE.
+        // ::text cast — pg_advisory_xact_lock() returns void, which Prisma's
+        // raw-result deserializer cannot read (P2010); the cast makes the
+        // single returned row deserializable.
+        await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${s.orgId}), 42)::text`
         const otherActiveAdmins = await tx.user.count({
           where: { orgId: s.orgId, role: 'ADMIN', active: true, id: { not: target.id } },
         })

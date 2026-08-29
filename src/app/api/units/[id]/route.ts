@@ -1,5 +1,5 @@
 import { getSession, isStaff } from '@/lib/auth'
-import { ok, bad, forbidden, unauthorized, isFkViolation } from '@/lib/api-helpers'
+import { ok, bad, forbidden, unauthorized, isFkViolation, readJson } from '@/lib/api-helpers'
 import { NextRequest } from 'next/server'
 import { db } from '@/lib/db'
 
@@ -13,7 +13,7 @@ export async function PUT(req: NextRequest, ctx: { params: Promise<{ id: string 
   const { id } = await ctx.params
   const row0 = await db.unit.findFirst({ where: { id, orgId: s.orgId } })
   if (!row0) return bad('not-found', 404)
-  const body = await req.json().catch(() => ({}))
+  const body = await readJson(req)
   const data: Record<string, unknown> = {}
   if (typeof body.name === 'string' && body.name.trim()) data.name = body.name.trim().slice(0, 120)
   if (typeof body.shortName === 'string') data.shortName = body.shortName.slice(0, 30)

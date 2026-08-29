@@ -122,6 +122,11 @@ export function qtyVal(v: unknown, fallback = 0): number {
   return Math.min(MAX_QTY, Math.max(-MAX_QTY, n))
 }
 
+/** Round to the StockLevel/qty precision — DECIMAL(14,3). */
+export function round3(n: number): number {
+  return Math.round((n + Number.EPSILON) * 1000) / 1000
+}
+
 /**
  * Parse a client-supplied date, rejecting values outside [2000-01-01, 2100-01-01].
  * Out-of-range/unparseable input returns null (caller decides: reject or default).
@@ -222,23 +227,36 @@ export function rateLimit(key: string, limit: number, windowMs: number): boolean
   return true
 }
 
+/** Loose shape check for a v4/v6 IP — rejects junk header values so garbage
+ *  keys cannot flood the limiter's bucket map. Not a full INET parser. */
+const IP_SHAPE_RE = /^(\d{1,3}\.){3}\d{1,3}$|^[0-9a-fA-F:]{2,45}$/
+
 /**
  * Resolve the client IP for rate limiting.
  * - TRUST_PROXY=true  → use X-Real-IP (overwritten by the proxy) or the
  *   RIGHT-MOST X-Forwarded-For entry (appended by our own proxy, so it cannot
- *   be spoofed by the client). Safe behind nginx/caddy per DEPLOY.md.
+ *   be spoofed by the client). Safe ONLY when the app is not directly
+ *   reachable — behind nginx/caddy per DEPLOY.md.
  * - otherwise         → return a constant bucket key ('untrusted'). Client
  *   headers are ignored entirely, so rotating X-Forwarded-For per request
  *   cannot evade the limiter.
+ * Header values are shape-validated and length-capped either way: a malformed
+ * or oversized value falls back to the shared bucket instead of becoming an
+ * attacker-controlled map key.
  */
 export function clientIp(req: NextRequest): string {
   if (process.env.TRUST_PROXY === 'true') {
-    const real = req.headers.get('x-real-ip')?.trim()
-    if (real) return real
-    const xff = req.headers.get('x-forwarded-for')
-    if (xff) {
-      const parts = xff.split(',').map((s) => s.trim()).filter(Boolean)
-      if (parts.length > 0) return parts[parts.length - 1]
+    const candidates = [
+      req.headers.get('x-real-ip')?.trim(),
+      (() => {
+        const xff = req.headers.get('x-forwarded-for')
+        if (!xff) return null
+        const parts = xff.split(',').map((s) => s.trim()).filter(Boolean)
+        return parts.length > 0 ? parts[parts.length - 1] : null
+      })(),
+    ]
+    for (const c of candidates) {
+      if (c && c.length <= 45 && IP_SHAPE_RE.test(c)) return c
     }
   }
   return 'untrusted'
@@ -276,14 +294,31 @@ export interface LoginBudget {
  * caps. The counts include the row just written. Enforcement is DB-backed →
  * holds across restarts and multiple app instances.
  */
-export async function recordFailedLogin(email: string, ip: string): Promise<LoginBudget> {
+export async function recordFailedLogin(rawEmail: string, rawIp: string): Promise<LoginBudget> {
+  // Bounded key values: a hostile pre-auth body must not be able to write
+  // multi-KB strings into the ledger row.
+  const email = rawEmail.slice(0, 200)
+  const ip = rawIp.slice(0, 64)
   await db.loginAttempt.create({ data: { email, ip } }).catch(() => undefined)
-  if (++loginLedgerGcCounter % 25 === 0) {
+  const since = new Date(Date.now() - LOGIN_WINDOW_MS)
+  // TARGETED PURGE: rows older than the window for THIS email/ip can never
+  // affect a budget decision again — deleting them on every failure keeps each
+  // key's footprint bounded (the 24h full-table GC below is forensics only).
+  void db.loginAttempt
+    .deleteMany({
+      where: {
+        OR: [
+          { email, createdAt: { lt: since } },
+          { ip, createdAt: { lt: since } },
+        ],
+      },
+    })
+    .catch(() => undefined)
+  if (++loginLedgerGcCounter % 5 === 0) {
     void db.loginAttempt
       .deleteMany({ where: { createdAt: { lt: new Date(Date.now() - LOGIN_LEDGER_MAX_AGE_MS) } } })
       .catch(() => undefined)
   }
-  const since = new Date(Date.now() - LOGIN_WINDOW_MS)
   const [acctFails, ipFails] = await Promise.all([
     db.loginAttempt.count({ where: { email, createdAt: { gte: since } } }),
     db.loginAttempt.count({ where: { ip, createdAt: { gte: since } } }),
@@ -344,6 +379,91 @@ function extractId(value: unknown): string | null {
  */
 export function isFkViolation(e: unknown): boolean {
   return (e as { code?: unknown })?.code === 'P2003'
+}
+
+/**
+ * Detect a transient DB conflict worth retrying on a FRESH transaction:
+ * PostgreSQL deadlock victim (40P01) and serialization/lock-conflict aborts
+ * (40001 / Prisma P2034). These abort the whole transaction, so the caller
+ * must re-run the handler (reads included) — see withDbRetry().
+ */
+export function isTransientDbConflict(e: unknown): boolean {
+  const code = (e as { code?: unknown })?.code
+  if (code === 'P2034') return true
+  const msg = String((e as Error)?.message ?? '')
+  return (
+    msg.includes('deadlock detected') ||
+    msg.includes('40P01') ||
+    msg.includes('40001') ||
+    msg.includes('could not serialize')
+  )
+}
+
+/**
+ * Re-run a transaction-returning closure up to `tries` times when PostgreSQL
+ * aborts it as a deadlock victim or serialization failure. Deterministic
+ * validation errors pass through untouched on the first attempt.
+ */
+export async function withDbRetry<T>(fn: () => Promise<T>, tries = 3): Promise<T> {
+  let lastError: unknown
+  for (let attempt = 0; attempt < tries; attempt++) {
+    try {
+      return await fn()
+    } catch (e) {
+      lastError = e
+      if (!isTransientDbConflict(e)) throw e
+    }
+  }
+  throw lastError
+}
+
+/**
+ * Body-size guard for route handlers (App Router imposes NO default limit).
+ * Reads the body as a stream and ABORTS past `capBytes`, so an oversized or
+ * chunked payload can never be fully buffered into memory (pre-auth DoS).
+ * Returns {} for oversize/unparseable bodies — route validation then answers
+ * 400 missing-fields without any 500 path.
+ */
+export async function readJson(req: NextRequest, capBytes = 1_000_000): Promise<Record<string, unknown>> {
+  const cl = Number(req.headers.get('content-length') ?? '0')
+  if (Number.isFinite(cl) && cl > capBytes) return {}
+  const stream = (req.body as ReadableStream<Uint8Array> | null) ?? null
+  if (!stream || typeof stream.getReader !== 'function') {
+    // Non-stream environment (tests / polyfills): read whole body, cap AFTER.
+    try {
+      const text = await req.text()
+      if (text.length > capBytes) return {}
+      const parsed = JSON.parse(text)
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}
+    } catch {
+      return {}
+    }
+  }
+  const reader = stream.getReader()
+  const chunks: Uint8Array[] = []
+  let total = 0
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    total += value.length
+    if (total > capBytes) {
+      try { await reader.cancel() } catch {}
+      return {}
+    }
+    chunks.push(value)
+  }
+  const merged = new Uint8Array(total)
+  let offset = 0
+  for (const c of chunks) {
+    merged.set(c, offset)
+    offset += c.length
+  }
+  try {
+    const parsed = JSON.parse(new TextDecoder().decode(merged))
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}
+  } catch {
+    return {}
+  }
 }
 
 /**

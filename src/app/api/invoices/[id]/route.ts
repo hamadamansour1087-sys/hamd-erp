@@ -1,5 +1,5 @@
 import { getSession, isStaff } from '@/lib/auth'
-import { ok, bad, unauthorized, forbidden, InsufficientStockError } from '@/lib/api-helpers'
+import { ok, bad, unauthorized, forbidden, InsufficientStockError, OperationConflictError, withDbRetry } from '@/lib/api-helpers'
 import { NextRequest } from 'next/server'
 import { db } from '@/lib/db'
 
@@ -106,7 +106,8 @@ export async function DELETE(req: NextRequest, ctx: { params: Promise<{ id: stri
       ?.allowNegativeStock ?? true
 
   try {
-    await db.$transaction(async (tx) => {
+    await withDbRetry(() =>
+      db.$transaction(async (tx) => {
     for (const it of inv.items) {
       const product = await tx.product.findFirst({ where: { id: it.productId, orgId: s.orgId }, select: { trackStock: true } })
       if (!product?.trackStock) continue
@@ -159,11 +160,21 @@ export async function DELETE(req: NextRequest, ctx: { params: Promise<{ id: stri
       }
     }
 
-    // Tenant-scoped write: matches on id + orgId.
-    await tx.invoice.updateMany({ where: { id: inv.id, orgId: s.orgId }, data: { status: 'CANCELLED' } })
+    // Tenant-scoped write WITH THE CANCEL GUARD: `status: { not: 'CANCELLED' }`
+    // in the WHERE makes the cancel idempotent under concurrency — a second
+    // concurrent cancel (or a network replay racing the first) matches 0 rows
+    // and ROLLS BACK its stock reversal instead of restoring quantities twice.
+    // (The pre-check above is advisory only; this is the source of truth.)
+    const cancelled = await tx.invoice.updateMany({
+      where: { id: inv.id, orgId: s.orgId, status: { not: 'CANCELLED' } },
+      data: { status: 'CANCELLED' },
+    })
+    if (cancelled.count === 0) throw new OperationConflictError('already-cancelled')
   })
+    )
   } catch (e) {
     if (e instanceof InsufficientStockError) return bad('insufficient-stock', 409)
+    if (e instanceof OperationConflictError) return bad(e.message, 409)
     throw e
   }
 

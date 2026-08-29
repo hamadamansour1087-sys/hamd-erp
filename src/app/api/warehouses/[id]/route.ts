@@ -1,5 +1,5 @@
 import { getSession, isStaff } from '@/lib/auth'
-import { ok, bad, str, optStr, forbidden, unauthorized } from '@/lib/api-helpers'
+import { ok, bad, str, optStr, boundedStr, forbidden, unauthorized, readJson } from '@/lib/api-helpers'
 import { NextRequest } from 'next/server'
 import { db } from '@/lib/db'
 
@@ -13,11 +13,11 @@ export async function PUT(req: NextRequest, ctx: { params: Promise<{ id: string 
   const { id } = await ctx.params
   const wh = await db.warehouse.findFirst({ where: { id, orgId: s.orgId } })
   if (!wh) return bad('not-found', 404)
-  const body = await req.json().catch(() => ({}))
+  const body = await readJson(req)
   const data: Record<string, unknown> = {}
-  if (str(body.name)) data.name = str(body.name)
+  if (str(body.name)) data.name = boundedStr(str(body.name), 200)
   ;['location', 'phone'].forEach((k) => {
-    if (body[k] !== undefined) data[k] = optStr(body[k])
+    if (body[k] !== undefined) data[k] = boundedStr(optStr(body[k]), k === 'location' ? 500 : 100) || null
   })
   if (body.isDefault === true && !wh.isDefault) {
     await db.$transaction([

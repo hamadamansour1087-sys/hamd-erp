@@ -1,5 +1,5 @@
 import { getSession, isStaff } from '@/lib/auth'
-import { ok, bad, forbidden, unauthorized } from '@/lib/api-helpers'
+import { ok, bad, forbidden, unauthorized, readJson } from '@/lib/api-helpers'
 import { NextRequest } from 'next/server'
 import { db } from '@/lib/db'
 
@@ -13,10 +13,11 @@ export async function PUT(req: NextRequest, ctx: { params: Promise<{ id: string 
   const { id } = await ctx.params
   const cat = await db.category.findFirst({ where: { id, orgId: s.orgId } })
   if (!cat) return bad('not-found', 404)
-  const body = await req.json().catch(() => ({}))
+  const body = await readJson(req)
   const data: Record<string, unknown> = {}
   if (typeof body.name === 'string' && body.name.trim()) data.name = body.name.trim().slice(0, 120)
-  if (typeof body.sort === 'number' && Number.isFinite(body.sort)) data.sort = Math.trunc(body.sort)
+  // Bounded safe integer — 1e10 would overflow the Int column (unhandled 500).
+  if (typeof body.sort === 'number' && Number.isSafeInteger(body.sort) && body.sort >= 0 && body.sort <= 1_000_000) data.sort = body.sort
   await db.category.updateMany({ where: { id, orgId: s.orgId }, data })
   const row = await db.category.findFirst({ where: { id, orgId: s.orgId } })
   return ok(row)

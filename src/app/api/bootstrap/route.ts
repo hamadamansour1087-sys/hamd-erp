@@ -2,7 +2,7 @@ import { getSession } from '@/lib/auth'
 import { NextRequest } from 'next/server'
 import { db } from '@/lib/db'
 
-import { unauthorized } from '@/lib/api-helpers'
+import { unauthorized, rateLimit, tooMany } from '@/lib/api-helpers'
 import { ok } from '@/lib/api-helpers'
 
 /**
@@ -12,6 +12,11 @@ import { ok } from '@/lib/api-helpers'
 export async function GET(req: NextRequest) {
   const s = await getSession(req)
   if (!s) return unauthorized()
+
+  // Payload guard: this is the heaviest read endpoint (products + levels +
+  // parties). A per-org rate limit stops a broken tab or a scripted client
+  // from turning it into a self-DoS loop.
+  if (!rateLimit(`bootstrap:${s.orgId}`, 60, 60_000)) return tooMany()
 
   const [org, categories, units, warehouses, products, customers, suppliers] =
     await Promise.all([
@@ -33,6 +38,9 @@ export async function GET(req: NextRequest) {
           unit: { select: { name: true, shortName: true } },
         },
         orderBy: { name: 'asc' },
+        // Memory ceiling: without a cap this single query's result set (with
+        // per-warehouse levels joined) grows unbounded with the tenant.
+        take: 10_000,
       }),
       db.customer.findMany({ where: { orgId: s.orgId }, orderBy: { createdAt: 'desc' }, take: 3000 }),
       db.supplier.findMany({ where: { orgId: s.orgId }, orderBy: { createdAt: 'desc' }, take: 1500 }),

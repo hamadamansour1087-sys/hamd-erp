@@ -1,7 +1,7 @@
-import { createToken, sessionCookie, verifyPasswordAsync } from '@/lib/auth'
+import { createToken, sessionCookie, verifyPasswordAsync, MAX_PASSWORD_LEN } from '@/lib/auth'
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { rateLimit, clientIp, tooMany, recordFailedLogin } from '@/lib/api-helpers'
+import { rateLimit, clientIp, tooMany, recordFailedLogin, readJson, boundedStr } from '@/lib/api-helpers'
 
 import { str } from '@/lib/api-helpers'
 
@@ -15,10 +15,17 @@ const DUMMY_HASH = `${'0'.repeat(32)}:${'0'.repeat(128)}` // salt:hash shape; ve
 /** POST /api/auth/login — issue session cookie for an active user (brute-force protected) */
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json().catch(() => ({}))
-    const email = str(body.email).toLowerCase()
+    // Body-size cap: pre-auth endpoint — a multi-MB JSON body must never be
+    // fully buffered (memory DoS), and scrypt must never digest one either.
+    const body = await readJson(req, 64_000)
+    const email = boundedStr(str(body.email).toLowerCase(), 200)
     const password = typeof body.password === 'string' ? body.password : ''
     if (!email || !password) {
+      return NextResponse.json({ error: 'invalid' }, { status: 400 })
+    }
+    // scrypt cost scales with input size — cap password material at a length
+    // far beyond any human password (a 10MB "password" is a CPU-burn attack).
+    if (password.length > MAX_PASSWORD_LEN) {
       return NextResponse.json({ error: 'invalid' }, { status: 400 })
     }
 

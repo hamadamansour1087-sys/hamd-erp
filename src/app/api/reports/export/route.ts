@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSession, isStaff } from '@/lib/auth'
-import { forbidden, unauthorized } from '@/lib/api-helpers'
+import { forbidden, unauthorized, readJson } from '@/lib/api-helpers'
 import { generateReportWorkbook, type ExcelLang, type ReportKind } from '@/lib/reports/excel-report'
 
 const KINDS: ReportKind[] = ['overview', 'products', 'stock', 'balances']
@@ -16,12 +16,7 @@ export async function POST(req: NextRequest) {
   if (!s) return unauthorized()
   if (!isStaff(s)) return forbidden()
 
-  let body: Record<string, unknown> = {}
-  try {
-    body = (await req.json()) as Record<string, unknown>
-  } catch {
-    body = {}
-  }
+  const body = await readJson(req, 64_000)
 
   const kind = (KINDS as string[]).includes(String(body.report)) ? (body.report as ReportKind) : null
   if (!kind) return NextResponse.json({ error: 'INVALID_REPORT' }, { status: 400 })

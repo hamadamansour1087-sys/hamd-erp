@@ -12,6 +12,9 @@ const scryptAsync = promisify(_scrypt) as (
 
 const COOKIE_NAME = 'session'
 const MAX_AGE = 60 * 60 * 24 * 30 // 30 days
+/** Hard cap for password material — scrypt cost scales with input length;
+ *  megabyte-long "passwords" are a CPU-burn vector, not a security feature. */
+export const MAX_PASSWORD_LEN = 1024
 
 /**
  * AUTH_SECRET — resolved lazily and never hardcoded.
@@ -165,6 +168,8 @@ export async function getSession(req: NextRequest): Promise<SessionUser | null> 
   })
   // Deactivated users, deleted users, and tokens issued before a password
   // change (tokenVersion bump) are all rejected here — server-side revocation.
+  // NOTE: deliberately NOT micro-cached — a session cache would delay the
+  // revocation guarantee (tests + security posture require immediate kicks).
   if (!user || !user.active) return null
   if ((user.tokenVersion ?? 0) !== (payload.ver ?? 0)) return null
   return {

@@ -11,6 +11,9 @@ import {
   forbidden,
   money,
   MAX_QTY,
+  safeDate,
+  readJson,
+  withDbRetry,
   withIdempotency,
   okIdempotent,
   isUniqueViolation,
@@ -19,7 +22,8 @@ import {
 import { NextRequest } from 'next/server'
 import { db } from '@/lib/db'
 
-
+/** Int4 ceiling for Prisma `number` filters — a bigger digit-run is garbage. */
+const MAX_DOC_NUMBER = 2_147_483_647
 
 /**
  * GET /api/invoices?type=SALE|PURCHASE&status=&customerId=&supplierId=&warehouseId=
@@ -55,12 +59,25 @@ export async function GET(req: NextRequest) {
     if (!isNaN(d.getTime())) dateRange.lte = new Date(d.getTime() + 24 * 3600 * 1000 - 1)
   }
   if (Object.keys(dateRange).length > 0) where.date = dateRange
-  if (/^\d+$/.test(q)) where.number = parseInt(q, 10)
-  else if (q) {
+  if (/^\d+$/.test(q)) {
+    // Overflow guard: a 20-digit "number" would crash the Int4 filter (500).
+    // Anything past the Int4 ceiling can never match — short-circuit honestly.
+    const n = Number(q)
+    if (!(Number.isSafeInteger(n) && n >= 1 && n <= MAX_DOC_NUMBER)) {
+      return ok({ total: 0, page, pageSize, rows: [] })
+    }
+    where.number = n
+  } else if (q) {
     where.OR =
       type === 'SALE'
-        ? [{ customer: { name: { contains: q } } }, { customer: { phone: { contains: q } } }]
-        : [{ supplier: { name: { contains: q } } }, { supplier: { phone: { contains: q } } }]
+        ? [
+            { customer: { name: { contains: q, mode: 'insensitive' } } },
+            { customer: { phone: { contains: q } } },
+          ]
+        : [
+            { supplier: { name: { contains: q, mode: 'insensitive' } } },
+            { supplier: { phone: { contains: q } } },
+          ]
   }
 
   const [total, rows] = await Promise.all([
@@ -107,7 +124,8 @@ export async function GET(req: NextRequest) {
  *   paidAmount?=0, paidMethod?='CASH', date?
  * }
  * Effects inside one transaction:
- *  - sequential number per org+type (Counter INV/PUR)
+ *  - sequential number per org+type (Counter INV/PUR — allocated OUTSIDE the
+ *    tx so the org's hot counter row is not locked for the whole transaction)
  *  - item snapshots + costAtSale for profit tracking
  *  - StockLevel update + ledger movements per item (allows negative w/ warning
  *    when org.allowNegativeStock=true — documented POS feature; when false the
@@ -118,23 +136,29 @@ export async function POST(req: NextRequest) {
   const s = await getSession(req)
   if (!s) return unauthorized()
 
-  const body = await req.json().catch(() => ({}))
+  // Body-size cap: 500 items bounded — hostile payloads never get buffered.
+  const body = await readJson(req, 2_000_000)
   const type = body.type === 'PURCHASE' ? 'PURCHASE' : 'SALE'
   // Authorization (server-side): CASHIER may create SALES (POS) but never PURCHASES.
   if (s.role === 'CASHIER' && type === 'PURCHASE') return forbidden()
 
-  const itemsInput: Array<{ productId?: unknown; qty?: unknown; price?: unknown }> = Array.isArray(body.items)
-    ? body.items.slice(0, 500)
-    : []
-  if (itemsInput.length === 0) return bad('items-required')
+  if (!Array.isArray(body.items) || body.items.length === 0) return bad('items-required')
+  // Hard cap on line count — silently SILENCING lines beyond the cap would
+  // book a different invoice than the client sent; reject instead.
+  if (body.items.length > 500) return bad('too-many-items')
+  const itemsInput: Array<{ productId?: unknown; qty?: unknown; price?: unknown }> = body.items
 
-  // resolve warehouses / parties upfront (outside tx) for speed
+  // resolve warehouse / parties upfront (outside tx) for speed.
+  // An EXPLICIT warehouseId that does not resolve is a 400 — falling back
+  // silently to the default warehouse books real goods into the wrong place.
   let warehouse: { id: string; name: string } | null = null
-  if (optStr(body.warehouseId)) {
+  const requestedWarehouseId = optStr(body.warehouseId)
+  if (requestedWarehouseId) {
     warehouse = await db.warehouse.findFirst({
-      where: { id: str(body.warehouseId), orgId: s.orgId },
+      where: { id: requestedWarehouseId, orgId: s.orgId },
       select: { id: true, name: true },
     })
+    if (!warehouse) return bad('warehouse-not-found')
   }
   if (!warehouse) {
     warehouse = await db.warehouse.findFirst({
@@ -163,36 +187,42 @@ export async function POST(req: NextRequest) {
   })
   const pmap = new Map(products.map((p) => [p.id, p]))
 
-  // build normalized items
+  // ONE batched level read for the whole cart (was a sequential N+1 probe per
+  // item before the transaction).
+  const levelRows = await db.stockLevel.findMany({
+    where: { productId: { in: productIds }, warehouseId: warehouse.id },
+    select: { productId: true, qty: true },
+  })
+  const levelMap = new Map(levelRows.map((l) => [l.productId, Number(l.qty)]))
+
+  // Single org read for BOTH policy inputs (was two separate queries).
+  const orgRow = await db.org.findUnique({
+    where: { id: s.orgId },
+    select: { allowNegativeStock: true, taxPercent: true },
+  })
+  const allowNegativeStock = orgRow?.allowNegativeStock ?? true
+
+  // build normalized items — STRICTLY: every provided line must resolve to a
+  // real product of this org with a positive qty. Silently dropping lines
+  // (the old behavior) booked a total different from the client's cart.
   const normItems: Array<{
     productId: string; qty: number; price: number; costAtSale: number
     nameSnap: string; unitSnap: string | null; barcodeSnap: string | null
     warnNegative: boolean; currentQty: number
   }> = []
   const warnings: string[] = []
-  // Server-side negative-stock policy (org setting, default true = the
-  // documented allow-with-warning behavior).
-  const allowNegativeStock =
-    (await db.org.findUnique({ where: { id: s.orgId }, select: { allowNegativeStock: true } }))
-      ?.allowNegativeStock ?? true
-
   for (const it of itemsInput) {
     const productId = str(it.productId)
     const product = pmap.get(productId)
-    if (!product) continue
+    if (!product) return bad('items-invalid')
     const qty = num(it.qty, 0)
-    if (qty <= 0) continue
+    if (qty <= 0) return bad('items-invalid')
     // Sanity cap: a 1e307 qty would poison stock math (Infinity on sum) and
     // every report downstream — reject the invoice instead of clamping money.
     if (qty > MAX_QTY) return bad('qty-too-large')
     const defaultPrice = type === 'SALE' ? Number(product.price) : Number(product.cost)
     const price = it.price !== undefined && it.price !== null && num(it.price, 0) >= 0 ? num(it.price, 0) : defaultPrice
-    const level = await db.stockLevel.findUnique({
-      where: { productId_warehouseId: { productId, warehouseId: warehouse.id } },
-      select: { qty: true },
-    })
-    const currentQty = Number(level?.qty ?? 0)
-    const effectiveQty = product.trackStock ? currentQty : Infinity
+    const currentQty = levelMap.get(productId) ?? 0
     let warnNegative = false
     if (product.trackStock) {
       if (type === 'SALE' && currentQty < qty) {
@@ -200,7 +230,6 @@ export async function POST(req: NextRequest) {
         warnings.push(`${product.name}: ${currentQty} → ${round2(currentQty - qty)}`)
       }
     }
-    void effectiveQty
     normItems.push({
       productId,
       qty: round2(qty),
@@ -213,14 +242,13 @@ export async function POST(req: NextRequest) {
       currentQty,
     })
   }
-  if (normItems.length === 0) return bad('items-invalid')
 
   const subtotal = round2(normItems.reduce((sum, it) => sum + it.qty * it.price, 0))
   let discount = money(body.discount, 0)
   discount = Math.min(discount, subtotal)
   // Tax percent must stay in a sane range — never negative, never above 100.
   const taxPercent = body.taxPercent !== undefined ? Math.min(100, Math.max(0, num(body.taxPercent, 0))) : undefined
-  const taxPercentFinal = taxPercent !== undefined ? taxPercent : Number((await db.org.findUnique({ where: { id: s.orgId }, select: { taxPercent: true } }))?.taxPercent ?? 14)
+  const taxPercentFinal = taxPercent !== undefined ? taxPercent : Number(orgRow?.taxPercent ?? 14)
   const taxAmount = round2(((subtotal - discount) * taxPercentFinal) / 100)
   const total = round2(subtotal - discount + taxAmount)
   const costTotal = round2(normItems.reduce((sum, it) => sum + it.qty * it.costAtSale, 0))
@@ -229,22 +257,39 @@ export async function POST(req: NextRequest) {
   paidAmount = Math.min(paidAmount, total)
   const paidMethod = ['CASH', 'BANK', 'CARD', 'WALLET'].includes(str(body.paidMethod)) ? str(body.paidMethod) : 'CASH'
   const status = paidAmount <= 0 ? 'UNPAID' : paidAmount >= total ? 'PAID' : 'PARTIAL'
-  const notes = optStr(body.notes)
-  const invoiceDate = typeof body.date === 'string' && !isNaN(new Date(body.date).getTime()) ? new Date(body.date) : new Date()
-  const dueDateRaw = optStr(body.dueDate)
-  if (dueDateRaw && isNaN(new Date(dueDateRaw).getTime())) return bad('invalid-due-date')
-  const dueDate = dueDateRaw
+  const notes = boundedStr(optStr(body.notes) ?? '', 2000) || null
+  // safeDate bounds [2000, 2100]: a year-9999 document poisons every period
+  // report; unparseable dates fall back to now (previous behavior preserved).
+  const invoiceDate = safeDate(body.date) ?? new Date()
+  const dueDate = safeDate(body.dueDate)
+  if (optStr(body.dueDate) && !dueDate) return bad('invalid-due-date')
 
   let result
   try {
     result = await withIdempotency(req, s, 'invoice', async (clientOpId) => {
+    // Document numbers are allocated OUTSIDE the write transaction: the
+    // per-org Counter row is a hot lock — holding it for the whole tx
+    // serialized every invoice/voucher/transfer of the tenant behind it.
+    // Burning a number on a failed attempt is fine (gaps already happen on
+    // rollback); uniqueness is enforced by @@unique([orgId, type, number]).
+    const number = await nextDocNumber(db, s.orgId, type === 'SALE' ? 'INV' : 'PUR')
+    const autoVoucherNumber = paidAmount > 0
+      ? await nextDocNumber(db, s.orgId, type === 'SALE' ? 'RCV' : 'PMT')
+      : null
+    const snapshotName = paidAmount > 0
+      ? type === 'SALE'
+        ? (customerId ? ((await findCustomerName(db, s.orgId, customerId)) ?? 'عميل نقدي') : 'عميل نقدي')
+        : (supplierId ? ((await findSupplierName(db, s.orgId, supplierId)) ?? 'مورد') : 'مورد')
+      : null
+
     // PG-SAFE CRASH-WINDOW DEDUPE: a P2002 aborts a PostgreSQL transaction
     // (25P02 on any later statement), so the committed-invoice resolution
     // lives in the catch OUTSIDE the transaction (fresh connection).
+    // withDbRetry re-runs the WHOLE attempt on deadlock/serialization aborts
+    // (a fresh number is allocated per attempt — gaps are acceptable).
     let created: { invoice: Awaited<ReturnType<typeof db.invoice.create>> & { items: unknown[] }; voucherNumber: number | null }
     try {
-    created = await db.$transaction(async (tx) => {
-    const number = await nextDocNumber(tx, s.orgId, type === 'SALE' ? 'INV' : 'PUR')
+    created = await withDbRetry(() => db.$transaction(async (tx) => {
     // CRASH-WINDOW DEDUPE: the scoped idempotency key is embedded in the
     // document inside the same transaction. If a previous attempt already
     // committed (crash after COMMIT, lost claim), the @@unique([orgId,
@@ -261,7 +306,7 @@ export async function POST(req: NextRequest) {
           warehouseId: warehouse!.id,
           userId: s.id,
           date: invoiceDate,
-          dueDate: dueDate ? new Date(dueDate) : null,
+          dueDate,
           subtotal,
           discount,
           taxPercent: taxPercentFinal,
@@ -287,9 +332,8 @@ export async function POST(req: NextRequest) {
       })
 
     // stock effects
-    for (const it of normItems) {
-      const delta = type === 'SALE' ? -it.qty : it.qty
-      if (type === 'SALE' && !allowNegativeStock) {
+    if (type === 'SALE' && !allowNegativeStock) {
+      for (const it of normItems) {
         // ATOMIC negative-stock guard: the WHERE clause (qty >= requested) is
         // part of the UPDATE statement — no read-then-write race. 0 rows ⇒
         // insufficient stock (missing row = qty 0); the transaction rolls back.
@@ -298,28 +342,32 @@ export async function POST(req: NextRequest) {
           data: { qty: { decrement: it.qty } },
         })
         if (cas.count === 0) throw new InsufficientStockError()
-      } else {
-        // allowNegativeStock=true (default): documented behavior — sale may
-        // drive stock below zero; the warning was collected in normItems.
+      }
+    } else {
+      // allowNegativeStock=true (default): documented behavior — sale may
+      // drive stock below zero; the warning was collected in normItems.
+      for (const it of normItems) {
+        const delta = type === 'SALE' ? -it.qty : it.qty
         await tx.stockLevel.upsert({
           where: { productId_warehouseId: { productId: it.productId, warehouseId: warehouse!.id } },
           create: { productId: it.productId, warehouseId: warehouse!.id, qty: delta },
           update: { qty: { increment: delta } },
         })
       }
-      await tx.stockMovement.create({
-        data: {
-          orgId: s.orgId,
-          productId: it.productId,
-          warehouseId: warehouse!.id,
-          qty: delta,
-          kind: type,
-          refType: 'INVOICE',
-          refId: invoice.id,
-          userId: s.id,
-        },
-      })
     }
+    // Ledger: ONE batched write for all items (was a create per item).
+    await tx.stockMovement.createMany({
+      data: normItems.map((it) => ({
+        orgId: s.orgId,
+        productId: it.productId,
+        warehouseId: warehouse!.id,
+        qty: type === 'SALE' ? -it.qty : it.qty,
+        kind: type,
+        refType: 'INVOICE',
+        refId: invoice.id,
+        userId: s.id,
+      })),
+    })
 
     // latest purchase updates product cost (tenant-scoped write)
     if (type === 'PURCHASE') {
@@ -328,18 +376,12 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // auto payment voucher
-    let voucherNumber: number | null = null
+    // auto payment voucher (number + party snapshot pre-resolved outside tx)
     if (paidAmount > 0) {
-      voucherNumber = await nextDocNumber(tx, s.orgId, type === 'SALE' ? 'RCV' : 'PMT')
-      const snapshotName =
-        type === 'SALE'
-          ? (await findCustomerName(tx, s.orgId, customerId)) ?? 'عميل نقدي'
-          : (await findSupplierName(tx, s.orgId, supplierId)) ?? 'مورد'
       await tx.voucher.create({
         data: {
           orgId: s.orgId,
-          number: voucherNumber,
+          number: autoVoucherNumber!,
           type: type === 'SALE' ? 'RECEIPT' : 'PAYMENT',
           method: paidMethod,
           amount: paidAmount,
@@ -348,15 +390,15 @@ export async function POST(req: NextRequest) {
           customerId: type === 'SALE' ? customerId : null,
           supplierId: type === 'PURCHASE' ? supplierId : null,
           invoiceId: invoice.id,
-          note: `${type === 'SALE' ? 'دفعة على الفاتورة' : 'سداد للفاتورة'} رقم ${number}`,
+          note: boundedStr(`${type === 'SALE' ? 'دفعة على الفاتورة' : 'سداد للفاتورة'} رقم ${number}`, 500),
           userId: s.id,
           date: invoiceDate,
         },
       })
     }
 
-    return { invoice, voucherNumber }
-  })
+    return { invoice, voucherNumber: paidAmount > 0 ? autoVoucherNumber! : null }
+    }))
     } catch (e) {
       // This transaction rolled back; the duplicate (if any) was committed by
       // the ORIGINAL attempt — stock, cost and payment voucher are already
@@ -406,8 +448,14 @@ export async function POST(req: NextRequest) {
   }))
 }
 
-async function nextDocNumber(tx: any, orgId: string, docKey: string): Promise<number> {
-  const c = await tx.counter.upsert({
+type CounterClient = { counter: { upsert: (args: {
+  where: { orgId_docKey: { orgId: string; docKey: string } }
+  create: { orgId: string; docKey: string; next: number }
+  update: { next: { increment: number } }
+}) => Promise<{ next: number }> } }
+
+async function nextDocNumber(client: CounterClient, orgId: string, docKey: string): Promise<number> {
+  const c = await client.counter.upsert({
     where: { orgId_docKey: { orgId, docKey } },
     create: { orgId, docKey, next: 2 },
     update: { next: { increment: 1 } },
@@ -415,15 +463,15 @@ async function nextDocNumber(tx: any, orgId: string, docKey: string): Promise<nu
   return c.next - 1 || 1
 }
 
-function findCustomerName(tx: any, orgId: string, id: string | null) {
+function findCustomerName(client: typeof db, orgId: string, id: string | null) {
   if (!id) return Promise.resolve(null)
-  return tx.customer
+  return client.customer
     .findFirst({ where: { id, orgId }, select: { name: true } })
     .then((r: { name: string } | null) => r?.name ?? null)
 }
-function findSupplierName(tx: any, orgId: string, id: string | null) {
+function findSupplierName(client: typeof db, orgId: string, id: string | null) {
   if (!id) return Promise.resolve(null)
-  return tx.supplier
+  return client.supplier
     .findFirst({ where: { id, orgId }, select: { name: true } })
     .then((r: { name: string } | null) => r?.name ?? null)
 }

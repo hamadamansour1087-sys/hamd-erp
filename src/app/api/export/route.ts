@@ -1,5 +1,5 @@
 import { getSession } from '@/lib/auth'
-import { bad, unauthorized, forbidden, decToNum } from '@/lib/api-helpers'
+import { bad, unauthorized, forbidden, decToNum, rateLimit, tooMany } from '@/lib/api-helpers'
 import { NextRequest } from 'next/server'
 import { db } from '@/lib/db'
 
@@ -12,6 +12,11 @@ export async function GET(req: NextRequest) {
   const s = await getSession(req)
   if (!s) return unauthorized()
   if (s.role !== 'ADMIN') return forbidden()
+
+  // Heaviest endpoint in the app (15 parallel scans + one big JSON.stringify).
+  // 6 runs/minute per org is far above any backup schedule and caps the
+  // memory/CPU an admin-side loop (or a compromised tab) can burn.
+  if (!rateLimit(`export:${s.orgId}`, 6, 60_000)) return tooMany()
 
   try {
     const [org, users, categories, units, warehouses, products, levels, movements, customers, suppliers, invoices, items, vouchers, expenses, transfers] =

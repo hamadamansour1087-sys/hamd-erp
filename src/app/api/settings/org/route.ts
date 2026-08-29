@@ -1,5 +1,5 @@
 import { getSession, isStaff, isAdmin } from '@/lib/auth'
-import { ok, bad, str, optStr, num, unauthorized, forbidden } from '@/lib/api-helpers'
+import { ok, bad, str, optStr, num, boundedStr, unauthorized, forbidden, readJson } from '@/lib/api-helpers'
 import { NextRequest } from 'next/server'
 import { db } from '@/lib/db'
 
@@ -12,10 +12,12 @@ export async function PUT(req: NextRequest) {
   const s = await getSession(req)
   if (!s) return unauthorized()
   if (!isStaff(s)) return forbidden()
-  const body = await req.json().catch(() => ({}))
+  // 3MB cap: the largest legitimate payload here is a base64 logo (~600KB
+  // after the data: prefix) inside JSON — everything bigger is hostile.
+  const body = await readJson(req, 3_000_000)
   const data: Record<string, unknown> = {}
 
-  if (str(body.name)) data.name = str(body.name)
+  if (str(body.name)) data.name = boundedStr(str(body.name), 200)
 
   const currency = str(body.currencyCode).toUpperCase()
   if (currency) {
@@ -38,7 +40,9 @@ export async function PUT(req: NextRequest) {
   }
 
   ;['phone', 'address'].forEach((k) => {
-    if (body[k] !== undefined) data[k] = optStr(body[k])
+    if (body[k] !== undefined) {
+      data[k] = (k === 'phone' ? boundedStr(optStr(body[k]), 100) : boundedStr(optStr(body[k]), 2000)) || null
+    }
   })
 
   // logo as data URL only — remote http(s) URLs are rejected so the server never

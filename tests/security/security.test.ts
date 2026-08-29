@@ -728,14 +728,16 @@ describe('Oversized string protection', () => {
     expect(prod?.name.length).toBe(200)
   })
 
-  test('invoice with 600 items is capped at 500 line items', async () => {
+  test('invoice with 600 items is REJECTED (too-many-items) — never silently truncated', async () => {
+    // Hardening update: the old slice(0,500) silently booked an invoice whose
+    // total differed from the client's 600-line cart. The route now refuses
+    // the whole request; nothing is created.
     const items = Array.from({ length: 600 }, () => ({ productId: productA.id, qty: 1 }))
     const res = await json(await invoicesRoute.POST(makeReq('/api/invoices', {
       method: 'POST', session: { ...adminA, orgId: orgA.id, role: 'ADMIN' } as Sess,
       body: { type: 'SALE', taxPercent: 0, items },
     })))
-    expect(res.status).toBe(200)
-    const count = await db.invoiceItem.count({ where: { invoiceId: res.json.data.id } })
-    expect(count).toBeLessThanOrEqual(500)
+    expect(res.status).toBe(400)
+    expect(res.json.error).toBe('too-many-items')
   })
 })

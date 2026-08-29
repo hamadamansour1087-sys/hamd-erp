@@ -2,39 +2,36 @@ import { getSession, isStaff } from '@/lib/auth'
 import {
   ok,
   bad,
+  boundedStr,
   str,
   optStr,
   num,
   round2,
   unauthorized,
   forbidden,
+  readJson,
+  withDbRetry,
   withIdempotency,
   okIdempotent,
   isUniqueViolation,
   InsufficientStockError,
+  OperationConflictError,
 } from '@/lib/api-helpers'
 import { NextRequest } from 'next/server'
+import { Prisma } from '@prisma/client'
 import { db } from '@/lib/db'
+import { globalMutex } from '@/lib/locks'
 
 /**
- * In-process keyed mutex (same pattern as stock/adjust) — serializes transfers
- * per source warehouse. SQLite allows a single writer; concurrent interactive
- * transactions would otherwise queue on the write lock (and can exceed
- * Prisma's 5s timeout under burst). The conditional decrement inside remains
- * the correctness guarantee: it is a single atomic UPDATE whose WHERE clause
- * enforces stock >= requested, so a negative source level is impossible.
+ * POST /api/transfers serializes per (sorted warehouse pair) instead of per
+ * source: two opposite transfers (A→B and B→A) used to acquire the in-process
+ * mutex on DIFFERENT keys and then lock the same stock rows in OPPOSITE order
+ * inside their transactions — a textbook PostgreSQL deadlock. Canonical pair
+ * ordering + the FOR UPDATE row-lock statement below (which establishes one
+ * global lock order across instances too) make that interleaving impossible.
  */
-const stockLocks = new Map<string, Promise<unknown>>()
-async function withStockLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
-  const prev = stockLocks.get(key) ?? Promise.resolve()
-  const next = prev.catch(() => undefined).then(fn)
-  stockLocks.set(key, next)
-  try {
-    return await next
-  } finally {
-    if (stockLocks.get(key) === next) stockLocks.delete(key)
-  }
-}
+const transferMutex = globalMutex
+
 /**
  * GET /api/transfers — recent transfers with names.
  */
@@ -95,7 +92,7 @@ export async function POST(req: NextRequest) {
   if (!s) return unauthorized()
   // Authorization (server-side): stock transfers are a management operation.
   if (!isStaff(s)) return forbidden()
-  const body = await req.json().catch(() => ({}))
+  const body = await readJson(req)
   const fromId = str(body.fromWarehouseId)
   const toId = str(body.toWarehouseId)
   if (!fromId || !toId || fromId === toId) return bad('warehouses-invalid')
@@ -125,21 +122,42 @@ export async function POST(req: NextRequest) {
   }
   if (items.length === 0) return bad('items-invalid')
 
+  // Canonical pair key — both directions contend on the SAME in-process mutex.
+  const mutexKey = `transfer:${[fromId, toId].sort().join(':')}`
+
   let result
   try {
     result = await withIdempotency(req, s, 'transfer', async (clientOpId) => {
+      // Counter allocated OUTSIDE the tx (hot-row contention).
+      const c = await db.counter.upsert({
+        where: { orgId_docKey: { orgId: s.orgId, docKey: 'TRF' } },
+        create: { orgId: s.orgId, docKey: 'TRF', next: 2 },
+        update: { next: { increment: 1 } },
+      })
+      const number = c.next - 1 || 1
+      const note = boundedStr(optStr(body.note) ?? '', 1000) || null
+
       // PG-SAFE CRASH-WINDOW DEDUPE: a P2002 aborts a PostgreSQL transaction,
       // so the committed-transfer resolution lives in the catch OUTSIDE the
       // transaction (fresh connection sees the committed document).
       let created: { id: string; number: number }
       try {
-      created = await withStockLock(`transfer:${fromId}`, () => db.$transaction(async (tx) => {
-    const c = await tx.counter.upsert({
-      where: { orgId_docKey: { orgId: s.orgId, docKey: 'TRF' } },
-      create: { orgId: s.orgId, docKey: 'TRF', next: 2 },
-      update: { next: { increment: 1 } },
-    })
-    const number = c.next - 1 || 1
+      created = await transferMutex.run(mutexKey, () => withDbRetry(() => db.$transaction(async (tx) => {
+    // DEADLOCK PREVENTION (cross-instance too): pin every StockLevel row this
+    // transfer will touch in ONE canonical order (warehouse, product) with
+    // FOR UPDATE before any write. Two concurrent transfers touching the same
+    // rows can never each hold a row the other needs in opposite order.
+    // (Prisma has no FOR UPDATE — one raw statement takes the row locks.)
+    if (items.length > 0) {
+      const sortedPids = items.map((i) => i.productId).sort()
+      const sortedWhs = [fromId, toId].sort()
+      await tx.$queryRaw`
+        SELECT id FROM "StockLevel"
+        WHERE "warehouseId" IN (${Prisma.join(sortedWhs)})
+          AND "productId" IN (${Prisma.join(sortedPids)})
+        ORDER BY "warehouseId", "productId"
+        FOR UPDATE`
+    }
 
     // CRASH-WINDOW DEDUPE: scoped key embedded in the document (@@unique per
     // org). A retry after a post-COMMIT crash resolves to the committed
@@ -151,7 +169,7 @@ export async function POST(req: NextRequest) {
           clientOperationId: clientOpId,
           fromWarehouseId: fromId,
           toWarehouseId: toId,
-          note: optStr(body.note),
+          note,
           userId: s.id,
           items: {
             create: items.map((i) => ({ productId: i.productId, productName: pmap.get(i.productId)!, qty: i.qty })),
@@ -203,7 +221,7 @@ export async function POST(req: NextRequest) {
       })
     }
     return transfer
-    }))
+    })))
 
       } catch (e) {
         // This transaction rolled back; the duplicate (if any) was committed by
@@ -221,6 +239,9 @@ export async function POST(req: NextRequest) {
     // withIdempotency released the claim before rethrowing — the client can
     // retry the same key once stock is available.
     if (e instanceof InsufficientStockError) return bad('insufficient-stock', 409)
+    if (e instanceof OperationConflictError && (e.message === 'lock-busy' || e.message === 'lock-queue-full')) {
+      return bad('busy-try-again', 409)
+    }
     throw e
   }
 

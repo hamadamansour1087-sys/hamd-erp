@@ -2,21 +2,21 @@ import { getSession, isStaff } from '@/lib/auth'
 import { NextRequest } from 'next/server'
 import { db } from '@/lib/db'
 
-import { unauthorized, boundedStr } from '@/lib/api-helpers'
+import { unauthorized, boundedStr, readJson } from '@/lib/api-helpers'
 import { ok, bad, str, optStr, signedMoney, round2, forbidden } from '@/lib/api-helpers'
 
 /** GET /api/suppliers?q= */
 export async function GET(req: NextRequest) {
   const s = await getSession(req)
   if (!s) return unauthorized()
-  const q = str(req.nextUrl.searchParams.get('q'))
+  const q = boundedStr(req.nextUrl.searchParams.get('q'), 100)
   const rows = await db.supplier.findMany({
     where: {
       orgId: s.orgId,
-      ...(q ? { OR: [{ name: { contains: q } }, { phone: { contains: q } }] } : {}),
+      ...(q ? { OR: [{ name: { contains: q, mode: 'insensitive' } }, { phone: { contains: q } }] } : {}),
     },
     orderBy: { createdAt: 'desc' },
-    take: 500,
+    take: 2000,
   })
   return ok(rows)
 }
@@ -31,7 +31,7 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const s = await getSession(req)
   if (!s) return unauthorized()
-  const body = await req.json().catch(() => ({}))
+  const body = await readJson(req)
   const name = boundedStr(body.name, 200)
   if (!name) return bad('name-required')
   const openingBalance = round2(signedMoney(body.openingBalance, 0))
@@ -40,11 +40,11 @@ export async function POST(req: NextRequest) {
     data: {
       orgId: s.orgId,
       name,
-      phone: optStr(body.phone),
-      address: optStr(body.address),
+      phone: boundedStr(optStr(body.phone), 100) || null,
+      address: boundedStr(optStr(body.address), 1000) || null,
       // Signed balance: may be negative (credit). Finite + rounded (see docs/MONEY-AUDIT.md)
       openingBalance,
-      notes: optStr(body.notes),
+      notes: boundedStr(optStr(body.notes), 2000) || null,
     },
   })
   return ok(row)

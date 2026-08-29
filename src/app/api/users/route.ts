@@ -1,5 +1,5 @@
-import { getSession, hashPasswordAsync } from '@/lib/auth'
-import { ok, bad, str, unauthorized, forbidden, boundedStr, isUniqueViolation } from '@/lib/api-helpers'
+import { getSession, hashPasswordAsync, MAX_PASSWORD_LEN } from '@/lib/auth'
+import { ok, bad, str, unauthorized, forbidden, boundedStr, isUniqueViolation, readJson } from '@/lib/api-helpers'
 import { NextRequest } from 'next/server'
 import { db } from '@/lib/db'
 
@@ -23,7 +23,7 @@ export async function POST(req: NextRequest) {
   const s = await getSession(req)
   if (!s) return unauthorized()
   if (s.role !== 'ADMIN') return forbidden()
-  const body = await req.json().catch(() => ({}))
+  const body = await readJson(req)
   const name = boundedStr(body.name, 200)
   const email = boundedStr(str(body.email).toLowerCase(), 200)
   const password = typeof body.password === 'string' ? body.password : ''
@@ -31,6 +31,7 @@ export async function POST(req: NextRequest) {
   if (!name || !email || password.length < 6) return bad('missing-fields')
   // Minimal RFC-style shape — an unvalidated string here used to accept 'ab'.
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return bad('invalid-email')
+  if (password.length > MAX_PASSWORD_LEN) return bad('weak-password')
 
   const exists = await db.user.findUnique({ where: { email }, select: { id: true } })
   if (exists) return bad('email-taken')

@@ -11,6 +11,8 @@ import {
   forbidden,
   money,
   safeDate,
+  readJson,
+  withDbRetry,
   withIdempotency,
   okIdempotent,
   isUniqueViolation,
@@ -42,8 +44,14 @@ export async function GET(req: NextRequest) {
   if (from && !isNaN(new Date(from).getTime())) range.gte = new Date(from)
   if (to && !isNaN(new Date(to).getTime())) range.lte = new Date(new Date(to).getTime() + 86_399_000)
   if (Object.keys(range).length) where.date = range
-  if (/^\d+$/.test(q)) where.number = parseInt(q, 10)
-  else if (q) where.partyName = { contains: q }
+  if (/^\d+$/.test(q)) {
+    // Int4 overflow guard (same as invoices GET).
+    const n = Number(q)
+    if (!(Number.isSafeInteger(n) && n >= 1 && n <= 2_147_483_647)) {
+      return ok({ total: 0, page, pageSize, rows: [] })
+    }
+    where.number = n
+  } else if (q) where.partyName = { contains: q, mode: 'insensitive' }
 
   const [total, rows] = await Promise.all([
     db.voucher.count({ where }),
@@ -92,7 +100,7 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const s = await getSession(req)
   if (!s) return unauthorized()
-  const body = await req.json().catch(() => ({}))
+  const body = await readJson(req)
   const type = body.type === 'PAYMENT' ? 'PAYMENT' : 'RECEIPT'
   // Authorization (server-side): cashier takes receipts; supplier payouts are staff-only.
   if (type === 'PAYMENT' && !isStaff(s)) return forbidden()
@@ -130,37 +138,38 @@ export async function POST(req: NextRequest) {
 
   try {
     const result = await withIdempotency(req, s, 'voucher', async (clientOpId) => {
-      // PG-SAFE CRASH-WINDOW DEDUPE: a P2002 aborts a PostgreSQL transaction
-      // (25P02 on any later statement), so the committed-duplicate resolution
-      // lives in the catch OUTSIDE the transaction (fresh connection).
-      let created: Awaited<ReturnType<typeof db.voucher.create>>
-      try {
-      created = await db.$transaction(async (tx) => {
-      const c = await tx.counter.upsert({
+      // Counter allocated OUTSIDE the tx (hot-row contention) + party snapshot.
+      const c = await db.counter.upsert({
         where: { orgId_docKey: { orgId: s.orgId, docKey: type === 'RECEIPT' ? 'RCV' : 'PMT' } },
         create: { orgId: s.orgId, docKey: type === 'RECEIPT' ? 'RCV' : 'PMT', next: 2 },
         update: { next: { increment: 1 } },
       })
       const number = c.next - 1 || 1
 
-      let partyName = optStr(body.partyName)
+      let partyName = boundedStr(optStr(body.partyName) ?? '', 200) || null
       let partyType: string = str(body.partyType) || 'OTHER'
       if (!['CUSTOMER', 'SUPPLIER', 'OTHER'].includes(partyType)) partyType = 'OTHER'
       if (customerId) {
         partyType = 'CUSTOMER'
         if (!partyName) {
-          const cust = await tx.customer.findFirst({ where: { id: customerId, orgId: s.orgId }, select: { name: true } })
+          const cust = await db.customer.findFirst({ where: { id: customerId, orgId: s.orgId }, select: { name: true } })
           partyName = cust?.name ?? null
         }
       }
       if (supplierId) {
         partyType = 'SUPPLIER'
         if (!partyName) {
-          const sup = await tx.supplier.findFirst({ where: { id: supplierId, orgId: s.orgId }, select: { name: true } })
+          const sup = await db.supplier.findFirst({ where: { id: supplierId, orgId: s.orgId }, select: { name: true } })
           partyName = sup?.name ?? null
         }
       }
 
+      // PG-SAFE CRASH-WINDOW DEDUPE: a P2002 aborts a PostgreSQL transaction
+      // (25P02 on any later statement), so the committed-duplicate resolution
+      // lives in the catch OUTSIDE the transaction (fresh connection).
+      let created: Awaited<ReturnType<typeof db.voucher.create>>
+      try {
+      created = await withDbRetry(() => db.$transaction(async (tx) => {
       // CRASH-WINDOW DEDUPE: the scoped idempotency key is embedded in the
       // document inside the same transaction (@@unique per org). A retry after
       // a post-COMMIT crash resolves to the committed voucher — and skips the
@@ -178,39 +187,41 @@ export async function POST(req: NextRequest) {
             customerId: type === 'RECEIPT' ? customerId : null,
             supplierId: type === 'PAYMENT' ? supplierId : null,
             invoiceId,
-            note: optStr(body.note),
+            note: boundedStr(optStr(body.note) ?? '', 1000) || null,
             userId: s.id,
             date: safeDate(body.date) ?? new Date(),
           },
         })
 
       if (invoiceId) {
-        // Compare-and-swap: re-read paidAmount inside the write transaction and only
-        // apply when it is unchanged — concurrent payments retry instead of clobbering.
-        // OVERPAYMENT REJECTION: amount beyond the remaining due is a client bug or
-        // a race (another payment landed first) — reject with 409 instead of
-        // silently clamping money into the wrong bucket.
+        // Compare-and-swap: re-read paidAmount AND status inside the write
+        // transaction and only apply when both are unchanged — concurrent
+        // payments retry instead of clobbering, and a concurrent CANCEL is
+        // refused instead of writing money onto a cancelled document.
+        // OVERPAYMENT REJECTION: amount beyond the remaining due is a client bug
+        // or a race (another payment landed first) — reject with 409.
         for (let attempt = 0; ; attempt++) {
           const inv = await tx.invoice.findUnique({
             where: { id: invoiceId },
-            select: { total: true, paidAmount: true },
+            select: { total: true, paidAmount: true, status: true },
           })
           if (!inv) throw new OperationConflictError('invoice-vanished')
+          if (inv.status === 'CANCELLED') throw new OperationConflictError('invoice-cancelled')
           if (round2(Number(inv.paidAmount) + amount) > round2(Number(inv.total) + 0.001)) {
             throw new OperationConflictError('amount-exceeds-due')
           }
           const newPaid = round2(Number(inv.paidAmount) + amount)
           const status = newPaid <= 0 ? 'UNPAID' : newPaid >= Number(inv.total) ? 'PAID' : 'PARTIAL'
           const upd = await tx.invoice.updateMany({
-            where: { id: invoiceId, paidAmount: inv.paidAmount },
+            where: { id: invoiceId, paidAmount: inv.paidAmount, status: { not: 'CANCELLED' } },
             data: { paidAmount: newPaid, status },
           })
           if (upd.count === 1) break
-          if (attempt >= 4) throw new OperationConflictError('paid-amount-conflict')
+          if (attempt >= 10) throw new OperationConflictError('paid-amount-conflict')
         }
       }
       return voucher
-      })
+      }))
       } catch (e) {
         // This transaction rolled back; the duplicate (if any) was committed by
         // the ORIGINAL attempt — its paidAmount effects are already applied.

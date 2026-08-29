@@ -69,22 +69,35 @@ export async function GET(req: NextRequest) {
   ])
 
   const buckets = emptyBuckets()
+  // DST-SAFE bucket lookup: Africa/Cairo reinstated daylight saving (2023) —
+  // with 23h/25h days, stepping `from` by 24h produces a DUPLICATE or MISSING
+  // calendar-day key. A missing key used to silently DROP that day's sales
+  // (`if (!b) continue`); now any unseen key is created on demand from the
+  // row's own date, so every document lands in exactly one bucket.
+  const bucketFor = (key: string, d: Date) => {
+    let b = buckets.get(key)
+    if (!b) {
+      b = { label: dateFmt.format(d), sales: 0, profit: 0, purchases: 0, expenses: 0, count: 0, netRev: 0 }
+      buckets.set(key, b)
+    }
+    return b
+  }
   for (const inv of salesInv) {
-    const b = buckets.get(keyOf(new Date(inv.date)))
-    if (!b) continue
+    const d = new Date(inv.date)
+    const b = bucketFor(keyOf(d), d)
     b.sales += Number(inv.total)
     b.netRev += Number(inv.total) - Number(inv.taxAmount)
     b.profit += Number(inv.total) - Number(inv.taxAmount) - Number(inv.costTotal)
     b.count++
   }
   for (const inv of purInv) {
-    const b = buckets.get(keyOf(new Date(inv.date)))
-    if (!b) continue
+    const d = new Date(inv.date)
+    const b = bucketFor(keyOf(d), d)
     b.purchases += Number(inv.total)
   }
   for (const ex of expenses) {
-    const b = buckets.get(keyOf(new Date(ex.date)))
-    if (!b) continue
+    const d = new Date(ex.date)
+    const b = bucketFor(keyOf(d), d)
     b.expenses += Number(ex.amount)
   }
 
@@ -108,7 +121,16 @@ export async function GET(req: NextRequest) {
     }),
     db.category.findMany({ where: { orgId: s.orgId }, select: { id: true, name: true } }),
   ])
-  const prodIds = topItems.map((t) => t.productId)
+
+  // CATEGORY REVENUE — grouped IN THE DATABASE (one row per product) instead
+  // of streaming every invoice item in the range into JS.
+  const rangeAgg = await db.invoiceItem.groupBy({
+    by: ['productId'],
+    where: { invoice: { orgId: s.orgId, type: 'SALE', status: { not: 'CANCELLED' }, date: { gte: from, lte: to } } },
+    _sum: { total: true },
+  })
+  // ONE product fetch covers BOTH the top-8 names and the category mapping.
+  const prodIds = Array.from(new Set([...topItems.map((t) => t.productId), ...rangeAgg.map((t) => t.productId)]))
   const prods = await db.product.findMany({
     where: { orgId: s.orgId, id: { in: prodIds } },
     select: { id: true, name: true, categoryId: true },
@@ -122,21 +144,13 @@ export async function GET(req: NextRequest) {
     secondary: Number(t._sum.qty ?? 0),
   }))
 
-  // category revenue within range
-  const rangeItems = await db.invoiceItem.findMany({
-    where: { invoice: { orgId: s.orgId, type: 'SALE', status: { not: 'CANCELLED' }, date: { gte: from, lte: to } } },
-    select: { productId: true, total: true },
-  })
+  // category revenue within range (from the grouped rows)
   const catTotals = new Map<string, number>()
   catTotals.set('__none__', 0)
-  for (const it of rangeItems) {
-    const pid = it.productId
-    const catName = (() => {
-      const p = prods.find((x) => x.id === pid)
-      if (!p || !p.categoryId) return '__none__'
-      return p.categoryId
-    })()
-    catTotals.set(catName, (catTotals.get(catName) ?? 0) + Number(it.total))
+  for (const row of rangeAgg) {
+    const p = pmap.get(row.productId)
+    const catId = p?.categoryId ?? '__none__'
+    catTotals.set(catId, (catTotals.get(catId) ?? 0) + Number(row._sum.total ?? 0))
   }
   const topCategories = Array.from(catTotals.entries())
     .map(([id, v]) => ({ label: id === '__none__' ? 'غير مصنف' : (catMap.get(id) ?? 'غير مصنف'), value: round2(v) }))

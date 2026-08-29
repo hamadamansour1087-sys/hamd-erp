@@ -2,7 +2,7 @@ import { getSession } from '@/lib/auth'
 import { NextRequest } from 'next/server'
 import { db } from '@/lib/db'
 
-import { unauthorized, boundedStr, qtyVal, isUniqueViolation } from '@/lib/api-helpers'
+import { unauthorized, boundedStr, qtyVal, isUniqueViolation, readJson } from '@/lib/api-helpers'
 import { ok, bad, str, optStr, num, money, round2 } from '@/lib/api-helpers'
 
 /**
@@ -50,8 +50,8 @@ export async function GET(req: NextRequest) {
       })
     }
     where.OR = [
-      { name: { contains: q } },
-      { nameEn: { contains: q } },
+      { name: { contains: q, mode: 'insensitive' } },
+      { nameEn: { contains: q, mode: 'insensitive' } },
       { barcode: { contains: q } },
       { sku: { contains: q } },
     ]
@@ -98,7 +98,7 @@ export async function POST(req: NextRequest) {
   const s = await getSession(req)
   if (!s) return unauthorized()
   if (s.role === 'CASHIER') return bad('forbidden', 403)
-  const body = await req.json().catch(() => ({}))
+  const body = await readJson(req)
   const name = boundedStr(body.name, 200)
   if (!name) return bad('name-required')
 
@@ -128,9 +128,9 @@ export async function POST(req: NextRequest) {
         data: {
           orgId: s.orgId,
           name,
-          nameEn: optStr(body.nameEn),
-          sku: optStr(body.sku),
-          barcode: optStr(body.barcode),
+          nameEn: boundedStr(optStr(body.nameEn), 200) || null,
+          sku: boundedStr(optStr(body.sku), 100) || null,
+          barcode: boundedStr(optStr(body.barcode), 100) || null,
           categoryId,
           unitId,
           // Money fields: finite, non-negative, rounded to 2dp (see docs/MONEY-AUDIT.md)
@@ -138,8 +138,8 @@ export async function POST(req: NextRequest) {
           price: round2(money(body.price, 0)),
           minQty: round2(money(body.minQty, 0)),
           trackStock: body.trackStock !== false,
-          imageUrl: optStr(body.imageUrl),
-          notes: optStr(body.notes),
+          imageUrl: boundedStr(optStr(body.imageUrl), 2048) || null,
+          notes: boundedStr(optStr(body.notes), 2000) || null,
           active: body.active !== false,
         },
       })

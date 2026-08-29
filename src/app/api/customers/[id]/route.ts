@@ -1,5 +1,5 @@
 import { getSession, isStaff } from '@/lib/auth'
-import { ok, bad, str, optStr, signedMoney, round2, forbidden, unauthorized } from '@/lib/api-helpers'
+import { ok, bad, str, optStr, boundedStr, signedMoney, round2, forbidden, unauthorized, readJson, withDbRetry } from '@/lib/api-helpers'
 import { singlePartyDues } from '@/lib/reports-utils'
 import { NextRequest } from 'next/server'
 import { db } from '@/lib/db'
@@ -51,11 +51,11 @@ export async function PUT(req: NextRequest, ctx: { params: Promise<{ id: string 
   const { id } = await ctx.params
   const customer = await getCustomer(s.orgId, id)
   if (!customer) return bad('not-found', 404)
-  const body = await req.json().catch(() => ({}))
+  const body = await readJson(req)
   const data: Record<string, unknown> = {}
-  if (str(body.name)) data.name = str(body.name)
-  ;['phone', 'address', 'notes'].forEach((k) => {
-    if (body[k] !== undefined) data[k] = optStr(body[k])
+  if (str(body.name)) data.name = boundedStr(str(body.name), 200)
+  ;(['phone', 'address', 'notes'] as const).forEach((k) => {
+    if (body[k] !== undefined) data[k] = boundedStr(optStr(body[k]), k === 'phone' ? 100 : k === 'address' ? 1000 : 2000) || null
   })
   // Financial field: only staff may touch the opening balance (server-enforced).
   if (body.openingBalance !== undefined) {
@@ -68,7 +68,15 @@ export async function PUT(req: NextRequest, ctx: { params: Promise<{ id: string 
   return ok(await getCustomer(s.orgId, id))
 }
 
-/** DELETE /api/customers/[id] — staff only */
+/**
+ * DELETE /api/customers/[id] — staff only.
+ * RACE-SAFE: the usage pre-check and the delete run inside ONE Serializable
+ * transaction. In the old read-then-delete (both autocommit) an invoice or
+ * voucher landing between the check and the delete silently unlinked the
+ * customer (onDelete: SetNull) — history rewritten without an error.
+ * Serializable isolation makes PostgreSQL abort the losing writer (P2034),
+ * which withDbRetry surfaces as a retry and finally an honest failure.
+ */
 export async function DELETE(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   const s = await getSession(req)
   if (!s) return unauthorized()
@@ -76,9 +84,24 @@ export async function DELETE(req: NextRequest, ctx: { params: Promise<{ id: stri
   const { id } = await ctx.params
   const customer = await getCustomer(s.orgId, id)
   if (!customer) return bad('not-found', 404)
-  const used = await db.invoice.count({ where: { orgId: s.orgId, customerId: id } })
-  if (used > 0) return bad('in-use')
-  await db.customer.deleteMany({ where: { id, orgId: s.orgId } })
+  try {
+    await withDbRetry(() =>
+      db.$transaction(
+        async (tx) => {
+          const used = await tx.invoice.count({ where: { orgId: s.orgId, customerId: id } })
+          if (used > 0) return 'in-use' as const
+          await tx.customer.deleteMany({ where: { id, orgId: s.orgId } })
+          return 'deleted' as const
+        },
+        { isolationLevel: 'Serializable' }
+      )
+    ).then((r) => {
+      if (r === 'in-use') throw new Error('in-use')
+    })
+  } catch (e) {
+    if (e instanceof Error && e.message === 'in-use') return bad('in-use', 409)
+    throw e
+  }
   return ok({ id })
 }
 

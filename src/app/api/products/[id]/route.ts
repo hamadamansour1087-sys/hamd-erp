@@ -1,5 +1,5 @@
 import { getSession, isStaff } from '@/lib/auth'
-import { ok, bad, str, optStr, money, round2, forbidden, unauthorized, isFkViolation } from '@/lib/api-helpers'
+import { ok, bad, str, optStr, boundedStr, money, round2, forbidden, unauthorized, isFkViolation, isUniqueViolation, readJson } from '@/lib/api-helpers'
 import { NextRequest } from 'next/server'
 import { db } from '@/lib/db'
 
@@ -36,22 +36,50 @@ export async function PUT(req: NextRequest, ctx: { params: Promise<{ id: string 
   const existing = await db.product.findFirst({ where: { id, orgId: s.orgId } })
   if (!existing) return bad('not-found', 404)
 
-  const body = await req.json().catch(() => ({}))
+  const body = await readJson(req)
   const data: Record<string, unknown> = {}
   const setIf = (keys: string[], transform: (v: unknown) => unknown = (v) => v) => {
     for (const k of keys) {
       if (body[k] !== undefined && body[k] !== null) data[k] = transform(body[k])
     }
   }
-  if (str(body.name)) data.name = str(body.name)
-  setIf(['nameEn', 'sku', 'barcode', 'imageUrl', 'notes'], (v) => optStr(v))
+  if (str(body.name)) data.name = boundedStr(str(body.name), 200)
+  setIf(['nameEn', 'sku', 'barcode', 'imageUrl', 'notes'], (v) =>
+    boundedStr(optStr(v), 2048) || null
+  )
   setIf(['categoryId', 'unitId'], (v) => optStr(v))
   setIf(['cost', 'price', 'minQty'], (v) => round2(money(v, 0)))
   if (body.trackStock !== undefined) data.trackStock = !!body.trackStock
   if (body.active !== undefined) data.active = !!body.active
 
-  const row = await db.product.updateMany({ where: { id, orgId: s.orgId }, data })
-  if (row.count === 0) return bad('not-found', 404)
+  // TENANT-SAFETY (was missing — the cross-tenant reference hole): PUT is the
+  // only product write that let categoryId/unitId point at ANOTHER ORG's
+  // rows (the FK alone accepts any id — existence ≠ ownership). POST already
+  // validates; PUT now does too, for exactly the same reason.
+  if (typeof data.categoryId === 'string') {
+    const cat = await db.category.findFirst({
+      where: { id: data.categoryId, orgId: s.orgId },
+      select: { id: true },
+    })
+    if (!cat) return bad('category-not-found')
+  }
+  if (typeof data.unitId === 'string') {
+    const unit = await db.unit.findFirst({
+      where: { id: data.unitId, orgId: s.orgId },
+      select: { id: true },
+    })
+    if (!unit) return bad('unit-not-found')
+  }
+
+  try {
+    const row = await db.product.updateMany({ where: { id, orgId: s.orgId }, data })
+    if (row.count === 0) return bad('not-found', 404)
+  } catch (e) {
+    // UNIQUE(orgId, barcode/sku) raced or was violated by this update —
+    // surface a friendly 400 (POST already did; PUT was an unhandled 500).
+    if (isUniqueViolation(e)) return bad('duplicate-sku-or-barcode')
+    throw e
+  }
   const fresh = await db.product.findFirst({
     where: { id, orgId: s.orgId },
     include: { levels: true },
