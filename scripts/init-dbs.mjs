@@ -1,0 +1,10 @@
+import pg from 'pg'
+const c = new pg.Client({ host: '127.0.0.1', port: 5432, user: 'hamd', database: 'postgres' })
+await c.connect()
+const r = await c.query("SELECT 1 FROM pg_database WHERE datname='hamd'")
+if (r.rowCount === 0) await c.query('CREATE DATABASE hamd')
+const r2 = await c.query("SELECT 1 FROM pg_database WHERE datname='hamd_load'")
+if (r2.rowCount === 0) await c.query('CREATE DATABASE hamd_load')
+const list = await c.query('SELECT datname FROM pg_database WHERE datname LIKE \'hamd%\'')
+console.log('DBs:', list.rows.map(x => x.datname).join(', '))
+await c.end()
