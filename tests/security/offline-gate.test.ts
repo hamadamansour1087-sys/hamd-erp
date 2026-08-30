@@ -84,11 +84,24 @@ describe('OFFLINE-1 · Service Worker shell precache (sw.js)', () => {
     expect(manifestScript).toContain('sw-manifest.json')
   })
 
-  test('build pipeline generates the manifest BEFORE copying public/ to standalone', () => {
+  test('build pipeline generates the manifest and copies standalone assets in order', () => {
     const pkg = JSON.parse(readFileSync(join(process.cwd(), 'package.json'), 'utf8'))
+    // manifest must be generated right after next build, before the standalone copy
     expect(pkg.scripts.build).toContain('build-sw-manifest.mjs')
     expect(pkg.scripts.build.indexOf('build-sw-manifest.mjs'))
-      .toBeLessThan(pkg.scripts.build.indexOf('cp -r public'))
+      .toBeLessThan(pkg.scripts.build.indexOf('postbuild-local.mjs'))
+    // the standalone copy itself must be CONDITIONAL (no-ops on serverless
+    // targets like Vercel where .next/standalone does not exist)
+    const postbuild = readFileSync(
+      join(process.cwd(), 'scripts', 'postbuild-local.mjs'),
+      'utf8'
+    )
+    expect(postbuild).toContain("existsSync(standalone)")
+    expect(postbuild).toContain("'static'")
+    expect(postbuild).toContain("'public'")
+    // prisma client must be generated on install (serverless builds have no
+    // pre-generated engines)
+    expect(pkg.scripts.postinstall).toContain('prisma generate')
   })
 
   test('install precaches the root shell — no first-session gap', () => {

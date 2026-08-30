@@ -40,7 +40,10 @@ export function proxy(request: NextRequest) {
     })
   )
 
-  const nonce = Buffer.from(crypto.randomUUID()).toString('base64')
+  // Edge-runtime safe (Vercel middleware has NO Node `Buffer`): btoa exists in
+  // both Edge and Node ≥16. Encoding a v4 UUID keeps the same 122 bits of
+  // entropy the previous Buffer base64 produced — nonce uniqueness unchanged.
+  const nonce = btoa(crypto.randomUUID())
 
   const isDev = process.env.NODE_ENV !== 'production'
   const scriptSrc = isDev
