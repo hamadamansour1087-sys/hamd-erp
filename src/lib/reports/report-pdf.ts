@@ -6,6 +6,8 @@
  * Dynamic imports keep jspdf/html2canvas out of the main bundle.
  */
 
+import { isValidLogoDataUrl } from '@/lib/logo-allowlist'
+
 export interface PdfTable {
   title: string
   headers: string[]
@@ -33,8 +35,9 @@ export interface PdfReportModel {
  * user-provided URLs, and the CSP (img-src 'self' data: blob:) blocks them
  * at the browser level too.
  *
- * STRICT server-parity allowlist (mirrors settings/org PUT): raster formats
- * only, mandatory base64 payload, hard length cap. A bare
+ * R3-1 WRITE/READ PARITY: this READ path shares the exact allowlist that
+ * guards the server WRITE path (settings/org PUT) via src/lib/logo-allowlist.ts
+ * — raster formats only, mandatory base64 payload, hard length cap. A bare
  * startsWith('data:image/') would let a stored value like
  * `data:image/png,1" onerror="...` pass this check and ESCAPE the src
  * attribute in the <img> below — a stored XSS executed on every report the
@@ -42,13 +45,12 @@ export interface PdfReportModel {
  * appear in the returned URL; the attribute template escapes it anyway.
  */
 function toDataUrl(url: string | null | undefined): string | null {
-  if (!url || url.length > 600_000) return null
-  return /^data:image\/(png|jpe?g|webp|gif);base64,[A-Za-z0-9+/=]+$/.test(url) ? url : null
+  return isValidLogoDataUrl(url) ? (url as string) : null
 }
 
 function buildContainer(model: PdfReportModel, logoUrl: string | null): HTMLDivElement {
   const esc = (v: string | number) =>
-    String(v ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c] ?? c)
+    String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] ?? c)
 
   const kpisHtml = model.kpis?.length
     ? `<div class="kpis">${model.kpis

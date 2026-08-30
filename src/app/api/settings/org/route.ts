@@ -1,5 +1,6 @@
 import { getSession, isStaff, isAdmin } from '@/lib/auth'
 import { ok, bad, str, optStr, num, boundedStr, unauthorized, forbidden, readJson } from '@/lib/api-helpers'
+import { isValidLogoDataUrl } from '@/lib/logo-allowlist'
 import { NextRequest } from 'next/server'
 import { db } from '@/lib/db'
 
@@ -49,9 +50,15 @@ export async function PUT(req: NextRequest) {
   // fetches attacker-controlled URLs (SSRF hardening at the source). Raster
   // formats only: SVG is executable markup and a stored-XSS footgun wherever a
   // future surface renders it outside a sandboxed <img>.
+  // R3-1 WRITE/READ PARITY: the strict allowlist (full base64 charset, both
+  // anchors, length cap) now guards the WRITE too — the old prefix-only check
+  // accepted breakout-shaped values like
+  //   data:image/png;base64,AAAA" onerror="alert(1)
+  // which then depended on every READ path being strict forever. Shared rule:
+  // src/lib/logo-allowlist.ts (the same module report-pdf renders with).
   if (body.logo !== undefined) {
     const logo = optStr(body.logo)
-    if (logo && (logo.length > 600_000 || !/^data:image\/(png|jpe?g|webp|gif);base64,/.test(logo))) {
+    if (logo && !isValidLogoDataUrl(logo)) {
       return bad('invalid-logo')
     }
     data.logo = logo

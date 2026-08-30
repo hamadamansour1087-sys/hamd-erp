@@ -2,7 +2,7 @@ import { getSession } from '@/lib/auth'
 import { NextRequest } from 'next/server'
 import { db } from '@/lib/db'
 
-import { unauthorized, boundedStr, qtyVal, isUniqueViolation, readJson } from '@/lib/api-helpers'
+import { unauthorized, boundedStr, qtyVal, isUniqueViolation, isFkViolation, readJson } from '@/lib/api-helpers'
 import { ok, bad, str, optStr, num, money, round2 } from '@/lib/api-helpers'
 
 /**
@@ -179,11 +179,16 @@ export async function POST(req: NextRequest) {
       // UNIQUE(orgId, barcode) — surface a friendly 400, not a 500.
       if (isUniqueViolation(e, 'barcode')) return { ok: false as const, error: 'duplicate-barcode' }
       if (isUniqueViolation(e)) return { ok: false as const, error: 'duplicate-sku-or-barcode' }
+      // R3-2: the up-front warehouse/category/unit validation runs OUTSIDE the
+      // transaction — a concurrent delete landing in between makes the in-tx
+      // insert FK-fail (P2003). Answer 409 instead of an opaque 500; the tx
+      // has already rolled back so nothing is half-written.
+      if (isFkViolation(e)) return { ok: false as const, error: 'reference-vanished' }
       throw e
     }
   })
 
-  if (!created.ok) return bad(created.error)
+  if (!created.ok) return bad(created.error, created.error === 'reference-vanished' ? 409 : 400)
   const withLevels = await db.product.findUnique({
     where: { id: created.product.id },
     include: { levels: { select: { warehouseId: true, qty: true } } },

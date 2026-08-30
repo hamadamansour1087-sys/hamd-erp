@@ -111,6 +111,14 @@ export async function POST(req: NextRequest) {
   const invoiceId = optStr(body.invoiceId)
   const customerId = optStr(body.customerId)
   const supplierId = optStr(body.supplierId)
+  // R3-3: cross-type party ids are a client bug — reject LOUDLY instead of
+  // resolving the party, snapshotting its name, and then silently DROPPING the
+  // FK link (a RECEIPT used to store partyType=SUPPLIER with supplierId=NULL).
+  // The UI never sends cross-type ids (finance-parts picks customerId for
+  // receipts / supplierId for payments), so this only ever fires for hostile
+  // or broken clients.
+  if (type === 'RECEIPT' && supplierId) return bad('party-type-mismatch')
+  if (type === 'PAYMENT' && customerId) return bad('party-type-mismatch')
 
   // TENANT-SAFETY: party references must belong to the caller's org. The FK
   // alone would happily accept another tenant's id (existence ≠ ownership).
