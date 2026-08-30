@@ -226,6 +226,23 @@ export default function POSView() {
   const [flash, setFlash] = React.useState<{ id: string; k: number } | null>(null)
   const [cartSheetOpen, setCartSheetOpen] = React.useState(false)
 
+  // Single cart instance per viewport: the aside hosts it on lg+, the bottom
+  // Sheet below lg. Mounting BOTH would share custOpen — the hidden aside's
+  // popover escapes its display:none via the Radix portal and ghosts behind
+  // the Sheet's overlay on phones. (CSS `hidden lg:block` cannot stop the
+  // portal — only conditional mounting can.)
+  const [cartOnAside, setCartOnAside] = React.useState(true)
+  React.useEffect(() => {
+    const mql = window.matchMedia('(min-width: 1024px)')
+    const onChange = () => {
+      setCartOnAside(mql.matches)
+      if (mql.matches) setCartSheetOpen(false) // switching to the aside closes the sheet
+    }
+    onChange()
+    mql.addEventListener('change', onChange)
+    return () => mql.removeEventListener('change', onChange)
+  }, [])
+
   const allProducts = boot.data?.products ?? []
   const categories = boot.data?.categories ?? []
   const warehouses = boot.data?.warehouses ?? []
@@ -454,7 +471,10 @@ export default function POSView() {
     <div className="space-y-3">
       {/* customer */}
       <div className="flex items-center gap-1.5">
-        <Popover open={custOpen} onOpenChange={setCustOpen}>
+        {/* modal popover: non-modal popovers cannot open over the mobile cart
+            Sheet (Radix Dialog modal layer — content is portaled outside the
+            sheet, so the touch never reaches it) → customers unreachable on phones */}
+        <Popover open={custOpen} onOpenChange={setCustOpen} modal>
           <PopoverTrigger asChild>
             <Button
               variant="outline"
@@ -977,11 +997,13 @@ export default function POSView() {
           </section>
 
           {/* -------------- cart panel (desktop end side) -------------- */}
+          {cartOnAside ? (
           <aside className="hidden lg:block">
             <div className="sticky top-20 max-h-[calc(100dvh-6.5rem)] space-y-3 overflow-y-auto scrollbar-thin rounded-2xl border bg-background p-3 shadow-sm">
               {cartContent}
             </div>
           </aside>
+          ) : null}
         </div>
       )}
 
@@ -1011,7 +1033,8 @@ export default function POSView() {
         </div>
       ) : null}
 
-      {/* -------------- mobile cart sheet -------------- */}
+      {/* -------------- mobile cart sheet (mounted below lg only — see cartOnAside) -------------- */}
+      {!cartOnAside ? (
       <Sheet open={cartSheetOpen} onOpenChange={setCartSheetOpen}>
         <SheetContent side="bottom" className="h-[90dvh] gap-0 p-0">
           <SheetHeader className="border-b">
@@ -1021,6 +1044,7 @@ export default function POSView() {
           <div className="flex-1 overflow-y-auto scrollbar-thin p-4">{cartContent}</div>
         </SheetContent>
       </Sheet>
+      ) : null}
 
       {/* -------------- success dialog -------------- */}
       <Dialog open={!!success} onOpenChange={(o) => !o && setSuccess(null)}>
