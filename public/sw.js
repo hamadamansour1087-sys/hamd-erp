@@ -14,12 +14,40 @@
  * - API GETs: network-first, only 2xx cached, fallback to last good data.
  * - Mutating methods: always passthrough (offline mutations handled by JS queue).
  */
-const VERSION = 'tijara-v5'
+const VERSION = 'tijara-v6'
 const SHELL_CACHE = `${VERSION}-shell`
 const ASSET_CACHE = `${VERSION}-assets`
 const DATA_CACHE = `${VERSION}-data`
 
 const PRECACHE = ['/', '/manifest.webmanifest', '/icons/icon-192.png', '/icons/icon-512.png']
+
+/**
+ * Build-time asset manifest (scripts/build-sw-manifest.mjs → public/sw-manifest.json).
+ * Lists EVERY content-hashed asset under /_next/static — main bundles, lazy view
+ * chunks (POS, Dashboard, …) and fonts — so one completed online session is
+ * enough for full offline capability. Without it, the first visit cached only
+ * the HTML shell: the browser then requested uncached chunks offline and the
+ * page died silently (reproduced live: "فصلت الانترنت ولكن لا استطيع فعل شئ").
+ */
+async function precacheAssetManifest(cache) {
+  try {
+    const res = await fetch('/sw-manifest.json', { cache: 'no-store' })
+    if (!res || !res.ok) return
+    const { urls } = await res.json()
+    if (!Array.isArray(urls)) return
+    // Batches of 8: gentle on slow first connections, still fast locally.
+    for (let i = 0; i < urls.length; i += 8) {
+      await Promise.all(
+        urls.slice(i, i + 8).map(async (url) => {
+          try {
+            const r = await fetch(url, { cache: 'no-cache' })
+            if (r && (r.ok || r.type === 'opaque')) await cache.put(url, r)
+          } catch {}
+        })
+      )
+    }
+  } catch {}
+}
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -48,6 +76,10 @@ self.addEventListener('install', (event) => {
           })
         )
       } catch {}
+      // All immutable build assets (JS chunks incl. lazy views, CSS, fonts).
+      // Must complete BEFORE skipWaiting — install is only "done" when the
+      // offline kit is fully on board.
+      await caches.open(ASSET_CACHE).then(precacheAssetManifest).catch(() => undefined)
       await self.skipWaiting()
     })()
   )

@@ -66,8 +66,29 @@ type Sess = { id: string; orgId: string; role: string; tokenVersion?: number }
 describe('OFFLINE-1 · Service Worker shell precache (sw.js)', () => {
   const sw = readFileSync(join(process.cwd(), 'public', 'sw.js'), 'utf8')
 
-  test('cache version is bumped (v5) so stale v4 shells are evicted', () => {
-    expect(sw).toContain("const VERSION = 'tijara-v5'")
+  test('cache version is bumped (v6) so stale v5 shells are evicted', () => {
+    expect(sw).toContain("const VERSION = 'tijara-v6'")
+  })
+
+  test('install precaches the FULL asset manifest — no first-visit dead page', () => {
+    // v6 regression proof: the user visited once, went offline, and every
+    // uncached chunk died (blank page). The manifest precache closes that gap.
+    expect(sw).toContain('precacheAssetManifest')
+    expect(sw).toContain('/sw-manifest.json')
+    // manifest must be built from .next/static at build time
+    const manifestScript = readFileSync(
+      join(process.cwd(), 'scripts', 'build-sw-manifest.mjs'),
+      'utf8'
+    )
+    expect(manifestScript).toContain(".next', 'static")
+    expect(manifestScript).toContain('sw-manifest.json')
+  })
+
+  test('build pipeline generates the manifest BEFORE copying public/ to standalone', () => {
+    const pkg = JSON.parse(readFileSync(join(process.cwd(), 'package.json'), 'utf8'))
+    expect(pkg.scripts.build).toContain('build-sw-manifest.mjs')
+    expect(pkg.scripts.build.indexOf('build-sw-manifest.mjs'))
+      .toBeLessThan(pkg.scripts.build.indexOf('cp -r public'))
   })
 
   test('install precaches the root shell — no first-session gap', () => {

@@ -31,9 +31,24 @@ export function registerSW() {
   }
 
   const doRegister = () => {
-    navigator.serviceWorker.register('/sw.js').catch(() => {
-      /* SW optional — ignore failures */
-    })
+    navigator.serviceWorker
+      .register('/sw.js')
+      .then(() => {
+        // Honest diagnostic state (Settings + support): a silent failure here is
+        // exactly how "offline does nothing" used to look like a working app.
+        try {
+          localStorage.setItem('tijara-sw-status', 'registered')
+        } catch {}
+      })
+      .catch((err) => {
+        // NEVER swallow: a failed registration means offline mode is OFF for
+        // this origin (gateway blocking /sw.js, insecure context, storage
+        // block). Surface it for diagnosis instead of pretending it's fine.
+        console.warn('[sw] registration failed:', err)
+        try {
+          localStorage.setItem('tijara-sw-status', 'failed:' + String(err?.message ?? err))
+        } catch {}
+      })
   }
   // Effects run AFTER the window `load` event in most hydration timelines,
   // so waiting for `load` here would never fire. Register immediately when
