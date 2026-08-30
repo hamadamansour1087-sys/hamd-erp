@@ -14,10 +14,14 @@
 // VERSION bump + reinstall.
 //
 // Run AFTER `next build`, BEFORE copying public/ into .next/standalone/.
+//
+// PORTABILITY: all paths resolve from process.cwd() — npm/bun scripts always
+// run from the package root, so this works in any checkout / CI / container.
+// No machine-specific absolute paths.
 import { readdirSync, statSync, writeFileSync, existsSync } from 'node:fs'
 import { join, relative, sep } from 'node:path'
 
-const ROOT = '/home/z/my-project'
+const ROOT = process.cwd()
 const STATIC_DIR = join(ROOT, '.next', 'static')
 const OUT = join(ROOT, 'public', 'sw-manifest.json')
 
@@ -33,7 +37,7 @@ function walk(dir) {
 }
 
 if (!existsSync(STATIC_DIR)) {
-  console.error('[sw-manifest] .next/static missing — run next build first')
+  console.error(`[sw-manifest] ${STATIC_DIR} missing — run next build first (cwd: ${ROOT})`)
   process.exit(1)
 }
 

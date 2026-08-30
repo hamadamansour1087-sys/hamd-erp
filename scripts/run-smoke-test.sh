@@ -2,7 +2,7 @@
 # H.A.M.D — production smoke test: boot built artifact against real `hamd` DB,
 # verify /api/health + real login via HTTP + auth gate, then clean up.
 set -u
-cd /home/z/my-project
+cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export AUTH_SECRET=smoke-secret-0123456789abcdef
 export DATABASE_URL=postgresql://hamd@127.0.0.1:5432/hamd
 export NODE_ENV=production

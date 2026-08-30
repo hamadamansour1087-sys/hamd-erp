@@ -7,7 +7,7 @@
 # totals against the LIVE database, then shuts the scratch instance down and
 # cleans up. Exits non-zero on any discrepancy.
 #
-# Usage: PGDATA=/home/z/pgdata PGBIN=/path/to/pg/bin ./scripts/pg-restore-verify.sh
+# Usage: PGDATA=/path/to/pgdata PGBIN=/path/to/pg/bin ./scripts/pg-restore-verify.sh
 set -euo pipefail
 PGDATA="${PGDATA:?set PGDATA}"
 PGBIN="${PGBIN:?set PGBIN}"

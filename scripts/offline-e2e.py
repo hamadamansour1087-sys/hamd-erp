@@ -7,10 +7,11 @@ which is a genuine browser-level offline: navigator.onLine=false + 'offline' eve
 
 Produces: /tmp/offline-e2e-results.json + screenshots in scripts/ (offline-step-*.png)
 """
-import json, sys, time, re
+import json, os, sys, time, re
 from playwright.sync_api import sync_playwright
 
 BASE = "http://127.0.0.1:3000"
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 EMAIL = "offline-e2e@hamd.test"
 PASSWORD = "Offline#2026"
 RESULTS = {"steps": [], "ok": True}
@@ -23,7 +24,7 @@ def step(n, name, ok, detail=""):
     return ok
 
 def shot(page, name):
-    page.screenshot(path=f"/home/z/my-project/scripts/offline-step-{name}.png", full_page=False)
+    page.screenshot(path=os.path.join(SCRIPT_DIR, f"offline-step-{name}.png"), full_page=False)
 
 def qsize(page):
     return page.evaluate("() => { try { return JSON.parse(localStorage.getItem('tijara-mq')||'[]').length } catch(e){ return -1 } }")

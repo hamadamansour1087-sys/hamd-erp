@@ -79,3 +79,8 @@ backups/
 
 # IM uploads (sandbox artifacts, not for the repo)
 /upload/
+
+# local postgres bootstrap (scripts/restore-pg.sh defaults) + daemon logs
+/.pg-setup/
+/.pgdata/
+/.daemon-*.log

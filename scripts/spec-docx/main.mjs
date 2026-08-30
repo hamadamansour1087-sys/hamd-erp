@@ -5,11 +5,12 @@ import {
   NumberFormat, TableOfContents, PageBreak,
 } from "docx";
 import fs from "node:fs";
+import path from "node:path";
 import { P, buildCoverR1RTL, pageFooter, docHeader, ar } from "./lib.mjs";
 import { content1 } from "./content1.mjs";
 import { content2 } from "./content2.mjs";
 
-const OUT = process.argv[2] ?? "/home/z/my-project/download/مواصفات-نظام-HAMD-وجاهزية-النشر.docx";
+const OUT = process.argv[2] ?? path.join(process.cwd(), "download", "مواصفات-نظام-HAMD-وجاهزية-النشر.docx");
 
 // ── cover config ──
 const coverConfig = {

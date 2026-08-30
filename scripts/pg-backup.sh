@@ -7,7 +7,7 @@
 # (RDS/Cloud SQL/Neon) use their automated snapshots or pg_dump/pgBackrest
 # instead — see docs/DISASTER-RECOVERY.md §"Managed deployments".
 #
-# Usage:  PGDATA=/home/z/pgdata PGBIN=/path/to/pg/bin ./scripts/pg-backup.sh
+# Usage:  PGDATA=/path/to/pgdata PGBIN=/path/to/pg/bin ./scripts/pg-backup.sh
 set -euo pipefail
 PGDATA="${PGDATA:?set PGDATA}"
 PGBIN="${PGBIN:?set PGBIN (dir containing pg_ctl)}"

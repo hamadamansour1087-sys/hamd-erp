@@ -1,7 +1,7 @@
 #!/bin/bash
 # H.A.M.D — scale-test orchestrator: 2 production instances + full suite in one session
 set -u
-cd /home/z/my-project
+cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 export AUTH_SECRET=load-test-secret-0123456789abcdef
 export DATABASE_URL=postgresql://hamd@127.0.0.1:5432/hamd_load

@@ -21,7 +21,7 @@ Scenarios:
 
 Output: /tmp/offline-firstvisit-results.json + screenshots scripts/fv-*.png
 """
-import json, time
+import json, os, time
 from playwright.sync_api import sync_playwright
 
 BASE = "http://127.0.0.1:3000"
@@ -186,7 +186,7 @@ def main():
         except Exception as e:
             step("B4: POS يفتح أوفلاين (chunk من precache) + منتجات من Snapshot", False,
                  str(e).split("\n")[0][:80])
-        pg.screenshot(path="/home/z/my-project/scripts/fv-B4-pos-offline.png")
+        pg.screenshot(path=os.path.join(os.path.dirname(os.path.abspath(__file__)), "fv-B4-pos-offline.png"))
         fails = failed_requests(pg)
         step("B5: صفر أخطاء تحميل أصول أثناء الجلسة الأوفلاين", len(fails) == 0, f"failed={fails[:5]}")
         ctx2.close()

@@ -39,8 +39,19 @@ Retention policy:
 Environment: `PGDATA`, `PGBIN` (directory containing `pg_ctl`), `PGPORT` (default
 5432), `PGSOCK` (default /tmp), `BACKUP_DIR` (default `./backups`).
 
+All commands below use placeholders instead of machine-specific paths. Determine
+the values for YOUR environment once and reuse them:
+
 ```bash
-PGDATA=/home/z/pgdata PGBIN=/usr/lib/postgresql/16/bin ./scripts/pg-backup.sh
+# PGDATA   → the data directory you initialised with initdb; on a running
+#            cluster you can read it directly from PostgreSQL:
+#              psql -U postgres -c 'SHOW data_directory;'
+# PGBIN    → directory containing pg_ctl, e.g.:
+pg_config --bindir          # common results: /usr/lib/postgresql/16/bin, /usr/pgsql-16/bin
+```
+
+```bash
+PGDATA=<PGDATA_PATH> PGBIN=<PGBIN_PATH> ./scripts/pg-backup.sh
 ```
 
 Reference run: backup of the live dataset is ~18 MB compressed; the script prints
@@ -72,7 +83,7 @@ provable drill:
 5. Stop the scratch cluster and clean up.
 
 ```bash
-PGDATA=/home/z/pgdata PGBIN=/usr/lib/postgresql/16/bin ./scripts/pg-restore-verify.sh
+PGDATA=<PGDATA_PATH> PGBIN=<PGBIN_PATH> ./scripts/pg-restore-verify.sh
 # ... [restore] RESTORE DRILL PASSED — backup is provably restorable
 ```
 
@@ -85,10 +96,13 @@ To actually fail over onto a backup:
 
 ```bash
 # 1) stop the app instances (they are stateless — restart is trivial)
-# 2) stop/replace the broken cluster, restore the data directory:
-mkdir /home/z/pgdata-restored
-tar -xzf backups/hamd-pgdata-<stamp>.tar.gz -C /home/z/pgdata-restored --strip-components=1
-rm -f /home/z/pgdata-restored/postmaster.pid /home/z/pgdata-restored/postmaster.opts
+# 2) stop/replace the broken cluster, restore the data directory.
+#    RESTORE_DIR must be OUTSIDE the live PGDATA (scratch location, e.g.
+#    /var/tmp/hamd-pgdata-restored — pick any path with enough free space):
+RESTORE_DIR=<RESTORE_DIR>
+mkdir -p "$RESTORE_DIR"
+tar -xzf backups/hamd-pgdata-<stamp>.tar.gz -C "$RESTORE_DIR" --strip-components=1
+rm -f "$RESTORE_DIR/postmaster.pid" "$RESTORE_DIR/postmaster.opts"
 # 3) start PostgreSQL on the data dir (or swap directories and start as usual)
 # 4) curl /api/health until 200, restart app instances, update DNS / proxy upstream
 ```
