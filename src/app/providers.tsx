@@ -77,12 +77,19 @@ function QueueFlusher() {
       if (syncing) return
       syncing = true
       try {
+        // Status pill (POS) listens: start → working, done → success/failed.
+        if (queueSizeNow() > 0) window.dispatchEvent(new CustomEvent('tijara-syncing'))
         const res = await flushQueue()
         if (res.ok > 0) {
           toast.success(t('shell.syncedToast'))
           window.dispatchEvent(new CustomEvent('tijara-synced'))
         } else if (res.failed) {
           toast.warning(t('shell.syncFailedToast'))
+          window.dispatchEvent(new CustomEvent('tijara-sync-failed'))
+        } else {
+          // Nothing succeeded and nothing hard-failed (e.g. all held) — still
+          // end the pill's syncing state so it never spins forever.
+          window.dispatchEvent(new CustomEvent('tijara-synced'))
         }
         if (res.held > 0) {
           toast.info(t('shell.syncHeldToast', { n: res.held }))

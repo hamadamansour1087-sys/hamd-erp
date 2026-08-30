@@ -1,5 +1,8 @@
 /* H.A.M.D service worker — offline-first app shell (PRODUCTION only).
- * - Precaches the root document shell on install (complete HTML only).
+ * - Precaches the root document shell ON INSTALL (complete HTML only) — the
+ *   very first session is offline-safe: the triggering navigation happens
+ *   BEFORE this SW activates, so waiting for "the first navigation" would
+ *   leave fresh installs with NO cached shell and an error page on reload.
  * - Navigation requests: network-first (with timeout) + safe cache fallback.
  * - Only COMPLETE documents are cached or served — a response streamed from a
  *   dev compile / aborted request can still be `res.ok` while truncated, and
@@ -11,7 +14,7 @@
  * - API GETs: network-first, only 2xx cached, fallback to last good data.
  * - Mutating methods: always passthrough (offline mutations handled by JS queue).
  */
-const VERSION = 'tijara-v4'
+const VERSION = 'tijara-v5'
 const SHELL_CACHE = `${VERSION}-shell`
 const ASSET_CACHE = `${VERSION}-assets`
 const DATA_CACHE = `${VERSION}-data`
@@ -25,10 +28,22 @@ self.addEventListener('install', (event) => {
         const cache = await caches.open(SHELL_CACHE)
         await Promise.all(
           PRECACHE.map(async (url) => {
-            if (url === '/') return // shell is cached on first navigation (validated)
             try {
               const res = await fetch(url)
-              if (res && res.ok) await cache.put(url, res)
+              if (!res || !res.ok) return
+              // The root document must be a COMPLETE html shell (same rule as
+              // handleNavigation) — never cache a truncated/streamed response.
+              if (url === '/') {
+                const body = await asCompleteHtml(res)
+                if (!body) return
+                await cache.put('/', new Response(body, {
+                  status: res.status,
+                  statusText: res.statusText,
+                  headers: res.headers,
+                }))
+                return
+              }
+              await cache.put(url, res)
             } catch {}
           })
         )
@@ -138,10 +153,28 @@ async function handleNavigation(req) {
     if (exact) return exact
     const shell = await caches.match('/')
     if (shell) return shell
-    return new Response('<h1>Offline</h1>', {
-      status: 503,
-      headers: { 'Content-Type': 'text/html; charset=utf-8' },
-    })
+    // Last resort (install-time precache failed too): an honest, RTL Arabic
+    // fallback explaining what happened and how to recover — never a bare
+    // browser error page, never a silent failure.
+    return new Response(
+      `<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8">`
+      + `<meta name="viewport" content="width=device-width, initial-scale=1">`
+      + `<title>H.A.M.D — وضع عدم الاتصال</title></head>`
+      + `<body style="font-family:system-ui,sans-serif;background:#fafaf9;color:#1c1917;`
+      + `display:flex;min-height:100vh;align-items:center;justify-content:center;margin:0">`
+      + `<div style="text-align:center;padding:2rem">`
+      + `<div style="font-size:3rem">📶</div>`
+      + `<h1 style="font-size:1.25rem;margin:1rem 0">لا يوجد اتصال بالإنترنت</h1>`
+      + `<p style="color:#57534e;margin:0 0 1.5rem">لم يتم تخزين نسخة من التطبيق على هذا الجهاز بعد.<br>`
+      + `افتح التطبيق مرة واحدة أثناء توفر الإنترنت ثم سيعمل بدون اتصال بعدها.</p>`
+      + `<button onclick="location.reload()" style="background:#0d9488;color:#fff;border:0;border-radius:0.5rem;`
+      + `padding:0.6rem 1.5rem;font-size:1rem;cursor:pointer">إعادة المحاولة</button>`
+      + `</div></body></html>`,
+      {
+        status: 503,
+        headers: { 'Content-Type': 'text/html; charset=utf-8' },
+      }
+    )
   }
 }
 

@@ -2,6 +2,12 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { cacheGet, cacheSet, enqueue } from '@/lib/offline/queue'
+import { loadPosSnapshot, savePosSnapshot } from '@/lib/offline/pos-store'
+
+/** The bootstrap payload is the POS offline dataset → mirrored into IndexedDB. */
+function isPosSnapshotUrl(url: string): boolean {
+  return url === '/api/bootstrap'
+}
 
 export interface ApiState<T> {
   data: T | undefined
@@ -96,6 +102,7 @@ export function useApi<T>(url: string | null): ApiState<T> {
         const d = await apiGet<T>(url)
         if (!alive) return
         cacheSet(url, d)
+        if (isPosSnapshotUrl(url)) void savePosSnapshot(d)
         setData(d)
         setFromCache(false)
         setError(undefined)
@@ -107,6 +114,17 @@ export function useApi<T>(url: string | null): ApiState<T> {
           setData(cached)
           setFromCache(true)
           setError(undefined)
+        } else if (isPosSnapshotUrl(url)) {
+          // localStorage evicted (quota/privacy purge) → IndexedDB snapshot.
+          const idb = await loadPosSnapshot()
+          if (!alive) return
+          if (idb !== null) {
+            setData(idb as T)
+            setFromCache(true)
+            setError(undefined)
+          } else {
+            setError(err.message)
+          }
         } else {
           setError(err.message)
         }
