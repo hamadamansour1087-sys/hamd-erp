@@ -80,6 +80,15 @@ function QueueFlusher() {
         // Status pill (POS) listens: start → working, done → success/failed.
         if (queueSizeNow() > 0) window.dispatchEvent(new CustomEvent('tijara-syncing'))
         const res = await flushQueue()
+        if (res.sessionExpired) {
+          // Server rejected the replay with 401 — every retry under this cookie
+          // is guaranteed to fail. Surface re-login ONCE and end the pill's
+          // syncing state; the queue itself is kept for replay after sign-in.
+          toast.info(t('shell.sessionExpiredToast'))
+          useSession.getState().setSession(null, null)
+          window.dispatchEvent(new CustomEvent('tijara-synced'))
+          return
+        }
         if (res.ok > 0) {
           toast.success(t('shell.syncedToast'))
           window.dispatchEvent(new CustomEvent('tijara-synced'))
@@ -90,6 +99,9 @@ function QueueFlusher() {
           // Nothing succeeded and nothing hard-failed (e.g. all held) — still
           // end the pill's syncing state so it never spins forever.
           window.dispatchEvent(new CustomEvent('tijara-synced'))
+        }
+        if (res.rejected) {
+          toast.warning(t('shell.syncRejectedToast', { n: res.rejected }))
         }
         if (res.held > 0) {
           toast.info(t('shell.syncHeldToast', { n: res.held }))

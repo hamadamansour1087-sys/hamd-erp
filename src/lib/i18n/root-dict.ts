@@ -143,6 +143,7 @@ export const rootDict: LangDict = {
     'auth.feature.pos': 'Lightning-fast point of sale',
     'auth.feature.rpt': 'Insightful reports',
     'auth.feature.off': 'Works offline',
+    'auth.offlineLogin': 'You are offline — signing in needs internet. Open the app once while online, sign in, and it will keep working offline afterwards.',
 
     // ---------- Shell ----------
     'shell.online': 'Online',
@@ -173,6 +174,8 @@ export const rootDict: LangDict = {
     'shell.collapseSidebar': 'Collapse menu',
     'boot.init': 'Starting your workspace…',
     'boot.failed': 'Could not connect — retrying when you are back online',
+    'shell.sessionExpiredToast': 'Session ended — sign in again to send the changes saved on this device',
+    'shell.syncRejectedToast': '{n} change(s) were rejected by your permissions and removed from the local queue',
   },
   ar: {
     'app.name': 'H.A.M.D',
@@ -308,6 +311,7 @@ export const rootDict: LangDict = {
     'auth.feature.pos': 'نقطة بيع سريعة كالبرق',
     'auth.feature.rpt': 'تقارير تدعم القرار',
     'auth.feature.off': 'يعمل أونلاين وأوفلاين',
+    'auth.offlineLogin': 'أنت غير متصل بالإنترنت — تسجيل الدخول يحتاج اتصالاً. افتح البرنامج مرة أثناء توفر الاتصال وسجّل الدخول، وبعدها يعمل بدون إنترنت.',
 
     // ---------- الواجهة ----------
     'shell.online': 'متصل',
@@ -338,5 +342,7 @@ export const rootDict: LangDict = {
     'shell.collapseSidebar': 'طي القائمة',
     'boot.init': 'جارٍ تجهيز مساحة عملك…',
     'boot.failed': 'تعذر الاتصال — سنعيد المحاولة تلقائياً عند عودة الإنترنت',
+    'shell.sessionExpiredToast': 'انتهت الجلسة — سجّل الدخول مرة أخرى لإرسال التغييرات المحفوظة على هذا الجهاز',
+    'shell.syncRejectedToast': 'رُفض {n} من التغييرات بسبب الصلاحيات وأُزيلت من الطابور المحلي',
   },
 }

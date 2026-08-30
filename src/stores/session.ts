@@ -3,6 +3,7 @@
 import { create } from 'zustand'
 import type { OrgDTO, SessionUser } from '@/lib/types'
 import { clearGetCache } from '@/lib/offline/cache-purge'
+import { resetSessionExpiry } from '@/lib/offline/queue'
 
 interface SessionState {
   user: SessionUser | null
@@ -39,6 +40,9 @@ export const useSession = create<SessionState>((set) => ({
       if (prev && user && prev.id !== user.id) clearGetCache()
       if (prev && !user) clearGetCache()
     } catch {}
+    // A successful login (any path) re-arms the offline sync replay — the 401
+    // gate from a previous expired session must not outlive that session.
+    if (user) resetSessionExpiry()
     try {
       if (user && org) localStorage.setItem(CACHE_KEY, JSON.stringify({ user, org }))
       else localStorage.removeItem(CACHE_KEY)

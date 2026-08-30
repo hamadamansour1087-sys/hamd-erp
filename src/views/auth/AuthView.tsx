@@ -101,7 +101,9 @@ export default function AuthView() {
       setSession(json.data.user as SessionUser, json.data.org as OrgDTO)
       toast.success(t('auth.loginTitle'))
     } catch {
-      toast.error(t('boot.failed'))
+      const offline =
+        typeof navigator !== 'undefined' && navigator.onLine === false
+      toast.error(offline ? t('auth.offlineLogin') : t('boot.failed'))
     } finally {
       setBusy(false)
     }

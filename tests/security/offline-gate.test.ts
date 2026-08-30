@@ -292,6 +292,98 @@ describe('OFFLINE-3/4 · offline mutation queue (unit, stubbed storage)', () => 
   })
 })
 
+describe('OFFLINE-9 · session-expiry gate (401) and permission rejects (403) in flush', () => {
+  const origLs = globalThis.localStorage
+  const origFetch = globalThis.fetch
+  let ls: Storage
+
+  beforeAll(() => {
+    ls = makeLsStub()
+    ;(globalThis as { localStorage: Storage }).localStorage = ls
+  })
+  afterAll(() => {
+    ;(globalThis as { localStorage: Storage }).localStorage = origLs
+    globalThis.fetch = origFetch
+  })
+
+  const queue = (async () => await import('@/lib/offline/queue'))()
+
+  function seedIdentity(userId = 'u1', orgId = 'o1') {
+    ls.setItem('tijara-boot-cache', JSON.stringify({ user: { id: userId, orgId } }))
+  }
+  function readQueue(): Array<Record<string, unknown>> {
+    return JSON.parse(ls.getItem('tijara-mq') ?? '[]')
+  }
+
+  test('401 mid-replay → sessionExpired, ALL items kept, gate blocks further replays', async () => {
+    const q = await queue
+    q.resetSessionExpiry()
+    ls.clear()
+    seedIdentity('cashier-a', 'org-a')
+    q.enqueue({ url: '/api/invoices', method: 'POST', body: { sale: 1 } })
+    q.enqueue({ url: '/api/invoices', method: 'POST', body: { sale: 2 } })
+    let calls = 0
+    globalThis.fetch = (async () => {
+      calls++
+      return new Response(JSON.stringify({ error: 'invalid-session' }), { status: 401 })
+    }) as typeof fetch
+
+    const res = await q.flushQueue()
+    expect(res.sessionExpired).toBe(true)
+    expect(res.failed).toBe(false)
+    expect(res.ok).toBe(0)
+    expect(calls).toBe(1) // stops at the FIRST 401 — never touches item 2
+    expect(readQueue()).toHaveLength(2) // financial data is KEPT, never dropped
+
+    // gate: subsequent flushes (20s poll) make ZERO network calls
+    const res2 = await q.flushQueue()
+    expect(res2.sessionExpired).toBe(true)
+    expect(calls).toBe(1)
+    expect(readQueue()).toHaveLength(2)
+  })
+
+  test('resetSessionExpiry (re-login) re-arms the replay and items sync once', async () => {
+    const q = await queue
+    // NOTE: no ls.clear() — this simulates the SAME device AFTER re-login:
+    // the two items kept by the 401 gate above must still be here.
+    seedIdentity('cashier-a', 'org-a') // SAME user signs back in
+    const ids = readQueue().map((i) => i.id)
+    expect(ids.length).toBe(2)
+    let calls = 0
+    globalThis.fetch = (async () => {
+      calls++
+      return new Response(JSON.stringify({ ok: true }), { status: 200 })
+    }) as typeof fetch
+
+    q.resetSessionExpiry()
+    const res = await q.flushQueue()
+    expect(res.sessionExpired).toBeUndefined()
+    expect(res.ok).toBe(2) // both offline sales delivered exactly once
+    expect(calls).toBe(2)
+    expect(readQueue()).toHaveLength(0)
+  })
+
+  test('403 mid-replay → permanently rejected item is dropped (counted), flush continues', async () => {
+    const q = await queue
+    q.resetSessionExpiry()
+    ls.clear()
+    seedIdentity('cashier-b', 'org-b')
+    q.enqueue({ url: '/api/products', method: 'POST', body: { forbidden: true } })
+    q.enqueue({ url: '/api/expenses', method: 'POST', body: { allowed: true } })
+    const statuses = [403, 200]
+    globalThis.fetch = (async () => {
+      const s = statuses.shift() ?? 200
+      return new Response(JSON.stringify({}), { status: s })
+    }) as typeof fetch
+
+    const res = await q.flushQueue()
+    expect(res.rejected).toBe(1)
+    expect(res.ok).toBe(1)
+    expect(res.failed).toBe(false)
+    expect(readQueue()).toHaveLength(0) // poison item gone, allowed item synced
+  })
+})
+
 // ═══════════════════════ C. SERVER IDEMPOTENCY ═══════════════════════
 
 let org1: { id: string }

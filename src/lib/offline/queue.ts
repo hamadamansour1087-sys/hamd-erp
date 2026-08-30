@@ -31,6 +31,22 @@ export interface QueueItem {
 const LS_KEY = 'tijara-mq'
 const BOOT_CACHE_KEY = 'tijara-boot-cache'
 
+/**
+ * Session-expiry gate: once the server answers 401 during a replay, the queued
+ * items can NEVER sync under the current cookie — retrying them every poll is
+ * guaranteed to fail (reproduced live 2026-08-30 after an AUTH_SECRET rotation).
+ * The gate stops network replays until the user signs in again; re-login calls
+ * resetSessionExpiry() (from the session store) so the next flush runs normally.
+ * Items are KEPT while gated — a disabled-then-reactivated account, or the same
+ * user signing back in, still gets every offline sale delivered exactly once.
+ */
+let sessionGate = false
+
+/** Clear the 401 gate — called on successful (re)login. */
+export function resetSessionExpiry() {
+  sessionGate = false
+}
+
 /** Current signed-in identity, read from the persisted bootstrap cache. */
 function currentIdentity(): { orgId: string; userId: string } | null {
   try {
@@ -97,9 +113,20 @@ export function enqueue(item: Omit<QueueItem, 'id' | 'at' | 'orgId' | 'userId'>)
  * Replay queued mutations sequentially.
  * Items belonging to another user/tenant are HELD (never replayed here).
  */
-export async function flushQueue(): Promise<{ ok: number; failed: boolean; held: number }> {
+export interface FlushResult {
+  ok: number
+  failed: boolean
+  held: number
+  /** 401 mid-replay → session ended; caller must surface re-login. */
+  sessionExpired?: boolean
+  /** 403 mid-replay → identity can never send this item; it was dropped. */
+  rejected?: number
+}
+
+export async function flushQueue(): Promise<FlushResult> {
   const all = read()
   if (all.length === 0) return { ok: 0, failed: false, held: 0 }
+  if (sessionGate) return { ok: 0, failed: false, held: all.length, sessionExpired: true }
 
   const identity = currentIdentity()
   if (!identity) return { ok: 0, failed: false, held: all.length }
@@ -112,6 +139,7 @@ export async function flushQueue(): Promise<{ ok: number; failed: boolean; held:
   const persist = (queue: QueueItem[]) => write([...queue, ...heldItems])
 
   let ok = 0
+  let rejected = 0
   const queue = [...replayable]
   while (queue.length > 0) {
     const item = queue[0]
@@ -125,24 +153,36 @@ export async function flushQueue(): Promise<{ ok: number; failed: boolean; held:
         credentials: 'include',
         body: item.body !== undefined ? JSON.stringify(item.body) : undefined,
       })
-      if (res.ok || res.status === 400 || res.status === 404) {
-        // 4xx means server rejected permanently → drop item to avoid poison queue
+      if (res.status === 401) {
+        // Session ended (expired / secret rotated / user deactivated). Nothing
+        // more can sync under this cookie — stop, KEEP every item, gate future
+        // replays, and let the caller surface re-login. Never drop financial
+        // data on 401: after re-login as the SAME user the replay continues.
+        persist(queue)
+        sessionGate = true
+        return { ok, failed: false, held, sessionExpired: true }
+      }
+      if (res.ok || res.status === 400 || res.status === 404 || res.status === 403) {
+        // 4xx means server rejected permanently → drop item to avoid poison queue.
+        // 403 (permission bound to this identity) can never succeed on replay,
+        // so it joins the permanent-reject drop list — counted, not silent.
         queue.shift()
         persist(queue)
         if (res.ok) ok++
+        else rejected++
         notify()
       } else {
         // temporary server issue / still processing (409) → stop and retry later
         persist(queue)
-        return { ok, failed: true, held }
+        return { ok, failed: true, held, rejected }
       }
     } catch {
       // still offline / flaky → stop
       persist(queue)
-      return { ok, failed: false, held }
+      return { ok, failed: false, held, rejected }
     }
   }
-  return { ok, failed: false, held }
+  return { ok, failed: false, held, rejected }
 }
 
 // ---------- Cached GET helpers (namespaced per identity) ----------
