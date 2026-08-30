@@ -37,9 +37,15 @@ export async function requestJson<T>(
       headers: init?.body ? { 'Content-Type': 'application/json', ...(init?.headers || {}) } : init?.headers,
     })
   } catch {
-    // Network failure → queue writable mutations for later sync
+    // Network failure → queue writable mutations for later sync.
+    // NOTE: this branch only runs when fetch itself THREW (connection refused /
+    // DNS / timeout) — server-side rejections arrive as a Response with a
+    // status and never land here. navigator.onLine is deliberately NOT part of
+    // the condition: it is a UI hint, not a connectivity oracle. A dead server
+    // behind an "online" device (onLine=true) must queue exactly like a dead
+    // WiFi (onLine=false) — otherwise the cashier loses the sale entirely.
   const method = ((init?.method as 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'GET') || 'GET')
-  if (method !== 'GET' && !init?.skipQueue && typeof navigator !== 'undefined' && !navigator.onLine) {
+  if (method !== 'GET' && !init?.skipQueue) {
     enqueue({ url, method: method as 'POST' | 'PUT' | 'PATCH' | 'DELETE', body: init?.body ? safeParse(init.body) : undefined })
     throw new ApiError('offline-queued', true)
   }

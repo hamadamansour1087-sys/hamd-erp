@@ -58,6 +58,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import EmptyState from '@/components/shared/empty-state'
 import PageHeader from '@/components/shared/page-header'
 import { ApiError, requestJson, useApi } from '@/hooks/use-api'
+import { onQueueChange } from '@/lib/offline/queue'
 import { useI18n } from '@/lib/i18n'
 import type {
   CategoryDTO,
@@ -126,6 +127,86 @@ function stockBadge(p: PosProduct): { cls: string; out: boolean } | null {
   if (p.minQty > 0 && qty <= p.minQty)
     return { cls: 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300', out: false }
   return { cls: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300', out: false }
+}
+
+/**
+ * POS sync status pill (OFFLINE / SYNCING / PENDING / FAILED / SYNCED).
+ * Pure display — the sync engine itself lives in lib/offline/queue + the
+ * QueueFlusher provider, which broadcast tijara-syncing / tijara-synced /
+ * tijara-sync-failed. Priority: OFFLINE > SYNCING > FAILED > PENDING > SYNCED.
+ */
+function PosSyncPill() {
+  const { t, num } = useI18n()
+  const online = useOnline()
+  const [pending, setPending] = React.useState(0)
+  const [phase, setPhase] = React.useState<'idle' | 'syncing' | 'synced' | 'failed'>('idle')
+  const timerRef = React.useRef<number | null>(null)
+
+  React.useEffect(() => onQueueChange(setPending), [])
+
+  React.useEffect(() => {
+    const onSyncing = () => setPhase('syncing')
+    const onSynced = () => {
+      setPhase('synced')
+      if (timerRef.current) window.clearTimeout(timerRef.current)
+      timerRef.current = window.setTimeout(() => setPhase('idle'), 3500)
+    }
+    const onFailed = () => setPhase('failed')
+    window.addEventListener('tijara-syncing', onSyncing)
+    window.addEventListener('tijara-synced', onSynced)
+    window.addEventListener('tijara-sync-failed', onFailed)
+    return () => {
+      window.removeEventListener('tijara-syncing', onSyncing)
+      window.removeEventListener('tijara-synced', onSynced)
+      window.removeEventListener('tijara-sync-failed', onFailed)
+      if (timerRef.current) window.clearTimeout(timerRef.current)
+    }
+  }, [])
+
+  const base = 'flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium'
+  const amber = 'border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-800 dark:bg-amber-950/50 dark:text-amber-300'
+  if (!online) {
+    return (
+      <span role="status" className={cn(base, 'border-red-300 bg-red-50 text-red-700 dark:border-red-900 dark:bg-red-950/50 dark:text-red-300')}>
+        <WifiOff className="size-3.5" aria-hidden />
+        {t('pos.offlinePill')}
+        {pending > 0 ? <span className="rounded-full bg-red-100 px-1.5 dark:bg-red-900/60">{num(pending)}</span> : null}
+      </span>
+    )
+  }
+  if (phase === 'syncing') {
+    return (
+      <span role="status" className={cn(base, amber)}>
+        <Loader2 className="size-3.5 animate-spin" aria-hidden />
+        {t('pos.syncingPill')}
+      </span>
+    )
+  }
+  if (phase === 'failed' && pending > 0) {
+    return (
+      <span role="status" className={cn(base, amber)}>
+        <WifiOff className="size-3.5" aria-hidden />
+        {t('pos.failedPill')}
+      </span>
+    )
+  }
+  if (pending > 0) {
+    return (
+      <span role="status" className={cn(base, amber)}>
+        <Loader2 className="size-3.5" aria-hidden />
+        {t('shell.pendingSync', { n: pending })}
+      </span>
+    )
+  }
+  if (phase === 'synced') {
+    return (
+      <span role="status" className={cn(base, 'border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300')}>
+        <Check className="size-3.5" aria-hidden />
+        {t('pos.syncedPill')}
+      </span>
+    )
+  }
+  return null
 }
 
 export default function POSView() {
@@ -753,6 +834,7 @@ export default function POSView() {
         title={t('nav.pos')}
         subtitle={t('pos.subtitle')}
         icon={<ScanLine className="size-5" aria-hidden />}
+        actions={<PosSyncPill />}
       />
 
       {failed ? (

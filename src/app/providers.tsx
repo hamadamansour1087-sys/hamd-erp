@@ -101,7 +101,17 @@ function QueueFlusher() {
     const handleOnline = () => void run()
     window.addEventListener('online', handleOnline)
     if (typeof navigator !== 'undefined' && navigator.onLine && queueSizeNow() > 0) void run()
-    return () => window.removeEventListener('online', handleOnline)
+    // Periodic retry while items are pending. The `online` event only fires on
+    // device-level connectivity changes; a server outage behind an "online"
+    // device produces NO event when the server returns — without this poll the
+    // queued sale would sit until the next reload (reproduced live 2026-08-30).
+    const retry = window.setInterval(() => {
+      if (queueSizeNow() > 0) void run()
+    }, 20_000)
+    return () => {
+      window.removeEventListener('online', handleOnline)
+      window.clearInterval(retry)
+    }
   }, [t])
   return null
 }
