@@ -254,10 +254,12 @@ function DateRangeInputs({
 }) {
   return (
     <>
+      {/* dir=ltr only — NO .num-ltr here: unicode-bidi:embed scrambles the
+          segmented date field on Android Chrome inside the RTL page. */}
       <Input
         type="date"
         dir="ltr"
-        className="num-ltr h-10 text-start text-xs md:h-9 md:w-36"
+        className="h-10 text-start text-xs md:h-9 md:w-36"
         aria-label={fromLabel}
         value={from}
         onChange={(e) => onFrom(e.target.value)}
@@ -265,7 +267,7 @@ function DateRangeInputs({
       <Input
         type="date"
         dir="ltr"
-        className="num-ltr h-10 text-start text-xs md:h-9 md:w-36"
+        className="h-10 text-start text-xs md:h-9 md:w-36"
         aria-label={toLabel}
         value={to}
         onChange={(e) => onTo(e.target.value)}

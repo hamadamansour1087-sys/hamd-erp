@@ -231,6 +231,16 @@
     direction: ltr;
     unicode-bidi: embed;
   }
+  /* Native date/time fields must stay plain LTR with NO bidi embedding.
+     Android Chrome renders them as segmented shadow-DOM fields (dd / mm / yyyy);
+     unicode-bidi: embed (e.g. .num-ltr on the host) visually scrambles the
+     segments and separators (reads like "022026/08/" instead of 02/08/2026). */
+  input[type="date"],
+  input[type="datetime-local"],
+  input[type="time"] {
+    direction: ltr;
+    unicode-bidi: normal;
+  }
 }
 
 /* Elegant thin scrollbars for long lists */
