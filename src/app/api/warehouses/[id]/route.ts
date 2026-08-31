@@ -28,7 +28,9 @@ export async function PUT(req: NextRequest, ctx: { params: Promise<{ id: string 
   // Tenant-scoped write: the update matches on id + orgId so it can never cross tenants.
   const res = await db.warehouse.updateMany({ where: { id, orgId: s.orgId }, data })
   if (res.count === 0) return bad('not-found', 404)
-  const row = await db.warehouse.findUnique({ where: { id } })
+  // Tenant-scoped re-read: orgId in the WHERE (defense-in-depth — the write
+  // above already matched id+orgId; the read must never trust that alone).
+  const row = await db.warehouse.findFirst({ where: { id, orgId: s.orgId } })
   return ok(row)
 }
 

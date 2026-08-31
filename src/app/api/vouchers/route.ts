@@ -213,8 +213,11 @@ export async function POST(req: NextRequest) {
         // OVERPAYMENT REJECTION: amount beyond the remaining due is a client bug
         // or a race (another payment landed first) — reject with 409.
         for (let attempt = 0; ; attempt++) {
-          const inv = await tx.invoice.findUnique({
-            where: { id: invoiceId },
+          // Tenant-scoped CAS read: orgId in the WHERE (defense-in-depth — the
+          // id was already validated org-scoped above; invoices never migrate
+          // orgs, but the money math must never trust that alone).
+          const inv = await tx.invoice.findFirst({
+            where: { id: invoiceId, orgId: s.orgId },
             select: { total: true, paidAmount: true, status: true },
           })
           if (!inv) throw new OperationConflictError('invoice-vanished')
@@ -225,7 +228,7 @@ export async function POST(req: NextRequest) {
           const newPaid = round2(Number(inv.paidAmount) + amount)
           const status = newPaid <= 0 ? 'UNPAID' : newPaid >= Number(inv.total) ? 'PAID' : 'PARTIAL'
           const upd = await tx.invoice.updateMany({
-            where: { id: invoiceId, paidAmount: inv.paidAmount, status: { not: 'CANCELLED' } },
+            where: { id: invoiceId, orgId: s.orgId, paidAmount: inv.paidAmount, status: { not: 'CANCELLED' } },
             data: { paidAmount: newPaid, status },
           })
           if (upd.count === 1) break

@@ -3,7 +3,7 @@ import { NextRequest } from 'next/server'
 import { db } from '@/lib/db'
 
 import { unauthorized } from '@/lib/api-helpers'
-import { ok, num, str } from '@/lib/api-helpers'
+import { ok, num, boundedStr } from '@/lib/api-helpers'
 
 /** GET /api/stock/movements?warehouseId=&productId=&kind=&limit= */
 export async function GET(req: NextRequest) {
@@ -12,7 +12,7 @@ export async function GET(req: NextRequest) {
   const sp = req.nextUrl.searchParams
   const warehouseId = sp.get('warehouseId') || undefined
   const productId = sp.get('productId') || undefined
-  const kind = str(sp.get('kind')) || undefined
+  const kind = boundedStr(sp.get('kind'), 50) || undefined
   const limit = Math.min(500, Math.max(1, Math.floor(num(sp.get('limit'), 100))))
 
   const rows = await db.stockMovement.findMany({

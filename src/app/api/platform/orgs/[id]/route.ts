@@ -109,6 +109,11 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
 }
 
 /** GET /api/platform/orgs/[id] — status whitelist helper for the console UI. */
-export async function GET() {
+export async function GET(req: NextRequest) {
+  // Invariant: EVERY handler authenticates. This endpoint returns only the
+  // static status enum, but leaving it open would let a future edit leak
+  // fields silently — gate it like everything else.
+  const s = await getSession(req)
+  if (!s) return unauthorized()
   return ok({ statuses: ORG_STATUSES })
 }

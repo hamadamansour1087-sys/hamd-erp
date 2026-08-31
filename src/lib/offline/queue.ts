@@ -26,6 +26,8 @@ export interface QueueItem {
   at: number
   orgId?: string
   userId?: string
+  /** Times this item was answered 409 (conflict). Diagnostic + rotation guard. */
+  attempts?: number
 }
 
 const LS_KEY = 'tijara-mq'
@@ -70,10 +72,28 @@ function read(): QueueItem[] {
   }
 }
 
-function write(items: QueueItem[]) {
+/**
+ * Persist the queue. Returns FALSE when the write failed (quota/privacy mode) —
+ * callers must treat this as "operation NOT saved" and surface it, never as
+ * success (a swallowed QuotaExceededError used to lose sales while the POS
+ * showed "saved offline").
+ */
+function write(items: QueueItem[]): boolean {
   try {
     localStorage.setItem(LS_KEY, JSON.stringify(items))
-  } catch {}
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** Cryptographically random id (the id IS the Idempotency-Key on replay). */
+function newId(): string {
+  try {
+    return crypto.randomUUID()
+  } catch {
+    return Math.random().toString(36).slice(2) + Date.now().toString(36)
+  }
 }
 
 let listeners: Array<(n: number) => void> = []
@@ -95,18 +115,27 @@ function notify() {
   listeners.forEach((l) => l(n))
 }
 
-export function enqueue(item: Omit<QueueItem, 'id' | 'at' | 'orgId' | 'userId'>) {
+/**
+ * Add a mutation to the offline queue. `item.id` (when provided by
+ * requestJson) is the SAME key that already travelled with the online attempt —
+ * reusing it here is what makes a committed-but-response-lost request
+ * idempotent on replay. Returns whether the item was actually persisted.
+ */
+export function enqueue(
+  item: Omit<QueueItem, 'id' | 'at' | 'orgId' | 'userId'> & { id?: string }
+): boolean {
   const items = read()
   const identity = currentIdentity()
   items.push({
     ...item,
-    id: Math.random().toString(36).slice(2) + Date.now().toString(36),
+    id: item.id ?? newId(),
     at: Date.now(),
     orgId: identity?.orgId,
     userId: identity?.userId,
   })
-  write(items)
+  const saved = write(items)
   notify()
+  return saved
 }
 
 /**
@@ -141,7 +170,18 @@ export async function flushQueue(): Promise<FlushResult> {
   let ok = 0
   let rejected = 0
   const queue = [...replayable]
+  // HEAD-OF-LINE FIX: a permanent 409 (e.g. insufficient stock with the
+  // negative-stock policy off) used to stall the whole FIFO forever — every
+  // later item never synced. 409 items are rotated to the BACK (keeping their
+  // key, so a late retry is still idempotent) and flushing continues; the
+  // flush stops only when EVERY remaining item has just been rotated (all
+  // conflicting) so we never spin inside one flush.
+  const rotated = new Set<string>()
   while (queue.length > 0) {
+    if (rotated.size >= queue.length) {
+      persist(queue)
+      return { ok, failed: true, held, rejected }
+    }
     const item = queue[0]
     try {
       const res = await fetch(item.url, {
@@ -168,11 +208,20 @@ export async function flushQueue(): Promise<FlushResult> {
         // so it joins the permanent-reject drop list — counted, not silent.
         queue.shift()
         persist(queue)
-        if (res.ok) ok++
-        else rejected++
+        if (res.ok) {
+          ok++
+          rotated.clear()
+        } else rejected++
         notify()
+      } else if (res.status === 409) {
+        // Conflict for THIS item only (lock-busy, stock CAS, overpayment…) →
+        // rotate to the back and keep going; others must not starve.
+        const cur = queue.shift()!
+        queue.push({ ...cur, attempts: (cur.attempts ?? 0) + 1 })
+        rotated.add(cur.id)
+        persist(queue)
       } else {
-        // temporary server issue / still processing (409) → stop and retry later
+        // temporary server-wide issue (429 / 5xx) → stop and retry later
         persist(queue)
         return { ok, failed: true, held, rejected }
       }

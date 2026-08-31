@@ -33,7 +33,7 @@ import {
 import { toast } from 'sonner'
 
 import { useI18n } from '@/lib/i18n'
-import { useSession } from '@/stores/session'
+import { readBootCache, useSession } from '@/stores/session'
 import { useUIStore } from '@/stores/ui'
 import { ApiError, requestJson, useApi } from '@/hooks/use-api'
 import { CURRENCIES, round2Client } from '@/lib/format'
@@ -854,7 +854,22 @@ function DataTab() {
 
   function clearPendingQueue() {
     try {
-      localStorage.removeItem('tijara-mq')
+      // Only drop THIS identity's pending items — held items belonging to
+      // other users of a shared device must survive (their sales are real).
+      const raw = localStorage.getItem('tijara-mq')
+      const boot = readBootCache()
+      const me = boot?.user ? { orgId: boot.user.orgId, userId: boot.user.id } : null
+      if (raw && me?.orgId && me?.userId) {
+        const all = JSON.parse(raw) as Array<{ orgId?: string; userId?: string }>
+        const rest = all.filter((i) => !(i.orgId === me.orgId && i.userId === me.userId))
+        if (rest.length === all.length) {
+          localStorage.removeItem('tijara-mq')
+        } else {
+          localStorage.setItem('tijara-mq', JSON.stringify(rest))
+        }
+      } else {
+        localStorage.removeItem('tijara-mq')
+      }
     } catch {}
     toast.success(t('set.queueCleared'))
     window.setTimeout(() => window.location.reload(), 650)

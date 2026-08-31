@@ -17,10 +17,23 @@ export LD_LIBRARY_PATH="$LIBDIR:${LD_LIBRARY_PATH:-}"
 PGDATA="$ROOT/.pgdata"
 DB_URL="postgresql://hamd@127.0.0.1:5432/hamd"
 
-# Stable preview credentials (preview-only; production uses real secrets).
-AUTH_SECRET=REDACTED
+# Preview credentials — NEVER hardcoded in this (git-tracked) file.
+# They live in scripts/.preview-secrets.env (gitignored, umask 077):
+#   first run generates random values and saves them there; later runs reuse
+#   them so sessions/credentials stay stable until the sandbox wipes the file.
+#   Production deployments must set real secrets in .env (see .env.example).
+SECRETS_FILE="$ROOT/scripts/.preview-secrets.env"
 ADMIN_EMAIL="owner@hamd.app"
-ADMIN_PASSWORD=REDACTED
+if [ -f "$SECRETS_FILE" ]; then
+  # shellcheck disable=SC1090
+  source "$SECRETS_FILE"
+fi
+if [ -z "${AUTH_SECRET:-}" ] || [ -z "${ADMIN_PASSWORD:-}" ]; then
+  AUTH_SECRET="$(bun -e 'console.log(Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("hex"))')"
+  ADMIN_PASSWORD="$(bun -e 'const a="ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";const r=crypto.getRandomValues(new Uint8Array(12));console.log(Array.from(r,c=>a[c%a.length]).join(""))')"
+  umask 077 && printf 'AUTH_SECRET=%s\nADMIN_PASSWORD=%s\n' "$AUTH_SECRET" "$ADMIN_PASSWORD" > "$SECRETS_FILE" && umask 022
+  echo "[secrets] generated new preview credentials → $SECRETS_FILE (platform admin password: $ADMIN_PASSWORD)"
+fi
 
 echo "[1/7] PostgreSQL 16 portable binaries"
 if [ ! -x "$PGBIN/initdb" ]; then

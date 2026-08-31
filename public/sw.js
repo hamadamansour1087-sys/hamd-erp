@@ -98,6 +98,11 @@ self.addEventListener('activate', (event) => {
 
 self.addEventListener('message', (event) => {
   if (event.data === 'SKIP_WAITING') self.skipWaiting()
+  // Logout / user switch: drop the entire API GET cache. It is keyed by URL
+  // only (no identity namespace), so a shared POS terminal would otherwise
+  // serve the PREVIOUS user's tenant data (catalog, customers — even the full
+  // /api/export backup) to the next user on a transient network failure.
+  if (event.data === 'PURGE_DATA') event.waitUntil(caches.delete(DATA_CACHE))
 })
 
 function isStatic(url) {
@@ -247,7 +252,19 @@ function event_noop(_p) {
   /* background refresh intentionally not awaited */
 }
 
+const SENSITIVE_NO_CACHE = /^\/api\/export(\/?|$)/
+
 async function handleApiGet(req) {
+  // Full tenant backup — NEVER cached (not into DATA_CACHE, and no offline
+  // fallback): a stale copy on a shared device would hand the whole ledger to
+  // whoever logs in next.
+  if (SENSITIVE_NO_CACHE.test(new URL(req.url).pathname)) {
+    try {
+      return await fetch(req)
+    } catch {
+      return Response.error()
+    }
+  }
   try {
     const res = await fetch(req)
     if (res && res.ok) {

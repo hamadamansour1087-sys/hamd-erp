@@ -115,8 +115,8 @@ export async function PUT(req: NextRequest, ctx: { params: Promise<{ id: string 
     if (e instanceof OperationConflictError) return bad(e.message, 400)
     throw e
   }
-  const row = await db.user.findUnique({
-    where: { id },
+  const row = await db.user.findFirst({
+    where: { id, orgId: s.orgId },
     select: { id: true, name: true, email: true, role: true, active: true, createdAt: true },
   })
   return ok(row)

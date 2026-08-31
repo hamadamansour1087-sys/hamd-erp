@@ -13,6 +13,7 @@ export async function GET(req: NextRequest) {
     where: { orgId: s.orgId },
     orderBy: [{ isDefault: 'desc' }, { name: 'asc' }],
     include: { _count: { select: { levels: true } } },
+    take: 5000, // bounded-list policy
   })
   return ok(rows.map(({ _count, ...w }) => ({ ...w, levelCount: _count.levels })))
 }

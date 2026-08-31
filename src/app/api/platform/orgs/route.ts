@@ -19,6 +19,7 @@ export async function GET(req: NextRequest) {
 
   const orgs = await db.org.findMany({
     orderBy: { createdAt: 'desc' },
+    take: 5000, // bounded-list policy (platform console; paginated UI on top)
     select: {
       id: true,
       name: true,

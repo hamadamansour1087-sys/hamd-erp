@@ -14,6 +14,7 @@ export async function GET(req: NextRequest) {
     where: { orgId: s.orgId },
     orderBy: { createdAt: 'asc' },
     select: { id: true, name: true, email: true, role: true, active: true, createdAt: true },
+    take: 5000, // bounded-list policy
   })
   return ok(rows)
 }

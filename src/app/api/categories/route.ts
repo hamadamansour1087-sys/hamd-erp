@@ -12,6 +12,7 @@ export async function GET(req: NextRequest) {
   const rows = await db.category.findMany({
     where: { orgId: s.orgId },
     orderBy: [{ sort: 'asc' }, { name: 'asc' }],
+    take: 5000, // bounded-list policy — reference tables stay small; the cap is a memory guard
   })
   return ok(rows)
 }

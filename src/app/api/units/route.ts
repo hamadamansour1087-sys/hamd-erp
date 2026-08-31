@@ -9,7 +9,7 @@ import { ok, bad, str, optStr, forbidden } from '@/lib/api-helpers'
 export async function GET(req: NextRequest) {
   const s = await getSession(req)
   if (!s) return unauthorized()
-  const rows = await db.unit.findMany({ where: { orgId: s.orgId }, orderBy: { name: 'asc' } })
+  const rows = await db.unit.findMany({ where: { orgId: s.orgId }, orderBy: { name: 'asc' }, take: 5000 })
   return ok(rows)
 }
 
