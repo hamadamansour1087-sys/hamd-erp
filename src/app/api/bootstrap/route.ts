@@ -25,6 +25,7 @@ export async function GET(req: NextRequest) {
         select: {
           id: true, name: true, currencyCode: true, taxPercent: true,
           phone: true, address: true, logo: true, invoiceTemplate: true,
+          status: true, trialEndsAt: true,
         },
       }),
       db.category.findMany({ where: { orgId: s.orgId }, orderBy: [{ sort: 'asc' }, { name: 'asc' }] }),
@@ -89,6 +90,8 @@ export async function GET(req: NextRequest) {
       phone: org.phone,
       address: org.address,
       logo: org.logo,
+      status: org.status,
+      trialEndsAt: org.trialEndsAt,
     },
     categories,
     units,

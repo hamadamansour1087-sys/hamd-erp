@@ -7,6 +7,7 @@ import { AppShell } from '@/components/shell/app-shell'
 import { ActiveView } from '@/views/registry'
 import AuthView from '@/views/auth/AuthView'
 import LandingPage from '@/views/landing/LandingPage'
+import PlatformView from '@/views/platform/PlatformView'
 import { useSession } from '@/stores/session'
 import { canAccess, useUIStore } from '@/stores/ui'
 import { useI18n } from '@/lib/i18n'
@@ -82,6 +83,12 @@ function Gate() {
       )
     }
     return <LandingPage onAuth={() => setShowAuth(true)} />
+  }
+
+  // PLATFORM CONSOLE: the company super-admin never enters a tenant shell —
+  // their session renders the subscribers console instead (see PlatformView).
+  if (user.role === 'SUPERADMIN') {
+    return <PlatformView />
   }
 
   return (

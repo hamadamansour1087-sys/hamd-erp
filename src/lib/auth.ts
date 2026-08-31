@@ -3,6 +3,7 @@ import { promisify } from 'util'
 import { NextRequest } from 'next/server'
 import { db } from '@/lib/db'
 import type { SessionUser } from '@/lib/types'
+import { accessState } from '@/lib/tenant'
 
 const scryptAsync = promisify(_scrypt) as (
   password: string,
@@ -164,7 +165,10 @@ export async function getSession(req: NextRequest): Promise<SessionUser | null> 
   if (!payload) return null
   const user = await db.user.findUnique({
     where: { id: payload.uid },
-    select: { id: true, orgId: true, email: true, name: true, role: true, active: true, tokenVersion: true },
+    select: {
+      id: true, orgId: true, email: true, name: true, role: true, active: true, tokenVersion: true,
+      org: { select: { status: true, trialEndsAt: true } },
+    },
   })
   // Deactivated users, deleted users, and tokens issued before a password
   // change (tokenVersion bump) are all rejected here — server-side revocation.
@@ -172,6 +176,12 @@ export async function getSession(req: NextRequest): Promise<SessionUser | null> 
   // revocation guarantee (tests + security posture require immediate kicks).
   if (!user || !user.active) return null
   if ((user.tokenVersion ?? 0) !== (payload.ver ?? 0)) return null
+  // TENANT LIFECYCLE GATE (central): a session whose org is PENDING,
+  // SUSPENDED, or past its trial window is refused here — one choke point
+  // that covers EVERY authenticated route by construction. The platform
+  // super-admin bypasses it (their own org is always ACTIVE, but the gate
+  // must also not block them if a lifecycle state ever touches it).
+  if (user.role !== 'SUPERADMIN' && !accessState(user.org).ok) return null
   return {
     id: user.id,
     orgId: user.orgId,
@@ -187,4 +197,11 @@ export function isStaff(session: SessionUser | null): boolean {
 
 export function isAdmin(session: SessionUser | null): boolean {
   return !!session && session.role === 'ADMIN'
+}
+
+/** Platform super-admin (H.A.M.D staff) — the only role allowed to manage
+ *  tenant lifecycle states from /api/platform/*. Not grantable by tenant
+ *  admins: POST /api/users whitelists roles to ADMIN|MANAGER|CASHIER. */
+export function isSuperAdmin(session: SessionUser | null): boolean {
+  return !!session && session.role === 'SUPERADMIN'
 }

@@ -2,6 +2,7 @@ import { createToken, sessionCookie, verifyPasswordAsync, MAX_PASSWORD_LEN } fro
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { rateLimit, clientIp, tooMany, recordFailedLogin, readJson, boundedStr } from '@/lib/api-helpers'
+import { accessState } from '@/lib/tenant'
 
 import { str } from '@/lib/api-helpers'
 
@@ -40,7 +41,10 @@ export async function POST(req: NextRequest) {
 
     const user = await db.user.findUnique({
       where: { email },
-      include: { org: true },
+      include: { org: { select: {
+        id: true, name: true, currencyCode: true, taxPercent: true,
+        phone: true, address: true, logo: true, status: true, trialEndsAt: true,
+      } } },
     })
     // Timing-equalize across ALL failure shapes: an existing-but-DISABLED
     // account must burn the same scrypt cost as an active one. Short-circuiting
@@ -60,6 +64,16 @@ export async function POST(req: NextRequest) {
       }
       return NextResponse.json({ error: 'invalid' }, { status: 401 })
     }
+    // TENANT LIFECYCLE GATE — correct credentials are NOT enough. A pending
+    // (unapproved), suspended, or expired-trial org cannot log in; the caller
+    // gets a specific error code so the UI can say WHY. Deliberately placed
+    // AFTER full credential verification: the response timing stays equal to
+    // the success path and no oracle reveals an org's status to someone who
+    // does not know the password.
+    const access = accessState(user.org)
+    if (!access.ok) {
+      return NextResponse.json({ error: access.code }, { status: 403 })
+    }
     const token = createToken(user.id, user.tokenVersion)
     const res = NextResponse.json({
       data: {
@@ -78,6 +92,8 @@ export async function POST(req: NextRequest) {
           phone: user.org.phone,
           address: user.org.address,
           logo: user.org.logo,
+          status: user.org.status,
+          trialEndsAt: user.org.trialEndsAt,
         },
       },
     })

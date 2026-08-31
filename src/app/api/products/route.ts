@@ -4,6 +4,7 @@ import { db } from '@/lib/db'
 
 import { unauthorized, boundedStr, qtyVal, isUniqueViolation, isFkViolation, readJson } from '@/lib/api-helpers'
 import { ok, bad, str, optStr, num, money, round2 } from '@/lib/api-helpers'
+import { TRIAL_MAX_PRODUCTS, trialExpired } from '@/lib/tenant'
 
 /**
  * GET /api/products?q=&categoryId=&active=&page=&pageSize=
@@ -101,6 +102,19 @@ export async function POST(req: NextRequest) {
   const body = await readJson(req)
   const name = boundedStr(body.name, 200)
   if (!name) return bad('name-required')
+
+  // TRIAL CAP ("القيود" during the free period): a TRIAL org cannot grow its
+  // catalog past the cap. Checked here (write path) — the session gate only
+  // blocks pending/suspended/expired orgs, a live trial is allowed but capped.
+  const orgRow = await db.org.findUnique({
+    where: { id: s.orgId },
+    select: { status: true, trialEndsAt: true },
+  })
+  if (orgRow?.status === 'TRIAL' && !trialExpired(orgRow.trialEndsAt)) {
+    const count = await db.product.count({ where: { orgId: s.orgId } })
+    if (count >= TRIAL_MAX_PRODUCTS) return bad('trial-limit-products', 403)
+  }
+
 
   // TENANT-SAFETY: category/unit references must belong to the caller's org
   // (the FK alone would accept another tenant's id — existence ≠ ownership).

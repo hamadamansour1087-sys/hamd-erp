@@ -21,6 +21,7 @@ import {
 } from '@/lib/api-helpers'
 import { NextRequest } from 'next/server'
 import { db } from '@/lib/db'
+import { TRIAL_MAX_INVOICES, trialExpired } from '@/lib/tenant'
 
 /** Int4 ceiling for Prisma `number` filters — a bigger digit-run is garbage. */
 const MAX_DOC_NUMBER = 2_147_483_647
@@ -141,6 +142,20 @@ export async function POST(req: NextRequest) {
   const type = body.type === 'PURCHASE' ? 'PURCHASE' : 'SALE'
   // Authorization (server-side): CASHIER may create SALES (POS) but never PURCHASES.
   if (s.role === 'CASHIER' && type === 'PURCHASE') return forbidden()
+
+  // TRIAL CAP ("القيود" during the free period): sales documents are capped
+  // for a TRIAL org (purchases stay open — stocking up for a demo is fine).
+  if (type === 'SALE') {
+    const orgRow = await db.org.findUnique({
+      where: { id: s.orgId },
+      select: { status: true, trialEndsAt: true },
+    })
+    if (orgRow?.status === 'TRIAL' && !trialExpired(orgRow.trialEndsAt)) {
+      const count = await db.invoice.count({ where: { orgId: s.orgId, type: 'SALE' } })
+      if (count >= TRIAL_MAX_INVOICES) return bad('trial-limit-invoices', 403)
+    }
+  }
+
 
   if (!Array.isArray(body.items) || body.items.length === 0) return bad('items-required')
   // Hard cap on line count — silently SILENCING lines beyond the cap would

@@ -76,7 +76,7 @@ export const settingsDict: LangDict = {
     'set.copyEmail': 'Copy email',
     'set.copyPassword': 'Copy password',
     'set.invalidEmail': 'Please enter a valid email address',
-    'set.registeringSplash': 'Setting up your business…',
+    'set.registeringSplash': 'Submitting your request…',
 
     // ---------- TAB 4 · Data & backup ----------
     'set.dataSub': 'Backups, temporary storage, and maintenance tools',
@@ -178,7 +178,7 @@ export const settingsDict: LangDict = {
     'set.copyEmail': 'نسخ البريد الإلكتروني',
     'set.copyPassword': 'نسخ كلمة المرور',
     'set.invalidEmail': 'أدخل بريداً إلكترونياً صحيحاً',
-    'set.registeringSplash': 'جارٍ تجهيز متجرك…',
+    'set.registeringSplash': 'جارٍ إرسال طلب التسجيل…',
 
     // ---------- تبويب 4 · البيانات والنسخ الاحتياطي ----------
     'set.dataSub': 'النسخ الاحتياطي والتخزين المؤقت وأدوات الصيانة',

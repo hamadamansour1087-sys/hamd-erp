@@ -1,10 +1,27 @@
-import { createToken, hashPasswordAsync, sessionCookie, MAX_PASSWORD_LEN } from '@/lib/auth'
+import { hashPasswordAsync, MAX_PASSWORD_LEN } from '@/lib/auth'
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 
 import { str, boundedStr, rateLimit, clientIp, tooMany, readJson, isUniqueViolation } from '@/lib/api-helpers'
+import { TRIAL_DAYS } from '@/lib/tenant'
 
-/** POST /api/auth/register — create a new tenant (org) + its ADMIN owner */
+/** Phone normalization for the registration contact field: digits, spaces,
+ *  dashes and a leading + only — enough for any real number, useless for XSS. */
+function normalizePhone(raw: string): string {
+  return raw.replace(/[^\d+\-\s()]/g, '').trim().slice(0, 30)
+}
+
+/**
+ * POST /api/auth/register — submit a new tenant (org) + its ADMIN owner.
+ *
+ * SUBSCRIPTION CONTROL: registration NO LONGER grants access. The org is
+ * created as PENDING and NO session cookie is issued — the caller stays on
+ * the marketing/auth screen with a "under review" confirmation. Access is
+ * granted exclusively from the platform console (SUPERADMIN): approve →
+ * TRIAL (TRIAL_DAYS with usage caps) or activate → ACTIVE. Until then the
+ * central session gate (lib/auth.getSession) and the login check refuse
+ * every request for this org.
+ */
 export async function POST(req: NextRequest) {
   try {
     // Anti-abuse: 5 registrations per hour per IP.
@@ -15,6 +32,7 @@ export async function POST(req: NextRequest) {
     const orgName = boundedStr(str(body.orgName), 200)
     const name = boundedStr(str(body.name), 200)
     const email = boundedStr(str(body.email).toLowerCase(), 200)
+    const phone = normalizePhone(str(body.phone))
     const password = typeof body.password === 'string' ? body.password : ''
 
     if (!orgName || !name || !email || !password) {
@@ -38,11 +56,21 @@ export async function POST(req: NextRequest) {
     }
 
     try {
-      const result = await db.$transaction(async (tx) => {
+      await db.$transaction(async (tx) => {
         const org = await tx.org.create({
-          data: { name: orgName, currencyCode: 'EGP', taxPercent: 14 },
+          data: {
+            name: orgName,
+            currencyCode: 'EGP',
+            taxPercent: 14,
+            phone: phone || null,
+            // LIFECYCLE: every new tenant starts pending company approval.
+            status: 'PENDING',
+            // Stamped at approval time from the platform console.
+            trialEndsAt: null,
+            approvedAt: null,
+          },
         })
-        const user = await tx.user.create({
+        await tx.user.create({
           data: {
             orgId: org.id,
             email,
@@ -51,7 +79,7 @@ export async function POST(req: NextRequest) {
             role: 'ADMIN',
           },
         })
-        // starter data so a new tenant is usable immediately
+        // starter data so the org is usable the moment it is approved
         await tx.warehouse.create({
           data: { orgId: org.id, name: 'المخزن الرئيسي', isDefault: true },
         })
@@ -61,32 +89,19 @@ export async function POST(req: NextRequest) {
             { orgId: org.id, name: 'كيلوجرام', shortName: 'kg' },
           ],
         })
-        return { org, user }
       })
 
-      const token = createToken(result.user.id, result.user.tokenVersion)
-      const res = NextResponse.json({
-        data: {
-          user: {
-            id: result.user.id,
-            orgId: result.org.id,
-            email: result.user.email,
-            name: result.user.name,
-            role: 'ADMIN',
-          },
-          org: {
-            id: result.org.id,
-            name: result.org.name,
-            currencyCode: result.org.currencyCode,
-            taxPercent: result.org.taxPercent,
-            phone: result.org.phone,
-            address: result.org.address,
-            logo: result.org.logo,
+      // 201 + explicit pending flag — deliberately NO token, NO cookie.
+      return NextResponse.json(
+        {
+          data: {
+            pending: true,
+            message: 'registration-received',
+            trialDays: TRIAL_DAYS,
           },
         },
-      })
-      res.cookies.set(sessionCookie(token))
-      return res
+        { status: 201 }
+      )
     } catch (e) {
       // TOCTOU: two concurrent registrations for the same email — the
       // pre-check above is advisory; the DB unique constraint decides.

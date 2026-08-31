@@ -1,7 +1,7 @@
 'use client'
 
 import * as React from 'react'
-import { BarChart3, Boxes, Copy, Eye, EyeOff, Loader2, Package, WifiOff, Zap } from 'lucide-react'
+import { BarChart3, Boxes, CheckCircle2, Copy, Eye, EyeOff, Loader2, Package, WifiOff, Zap } from 'lucide-react'
 import { toast } from 'sonner'
 
 import { useI18n } from '@/lib/i18n'
@@ -47,6 +47,9 @@ export default function AuthView() {
   const { t } = useI18n()
   const [mode, setMode] = React.useState<'login' | 'register'>('login')
   const [busy, setBusy] = React.useState(false)
+  // SUBSCRIPTION FLOW: after a successful registration the caller is NOT
+  // logged in — we swap the form for a "under review" confirmation panel.
+  const [registered, setRegistered] = React.useState(false)
 
   // login fields
   const [email, setEmail] = React.useState('')
@@ -58,6 +61,7 @@ export default function AuthView() {
   const [orgName, setOrgName] = React.useState('')
   const [name, setName] = React.useState('')
   const [rEmail, setREmail] = React.useState('')
+  const [rPhone, setRPhone] = React.useState('')
   const [rPassword, setRPassword] = React.useState('')
   const [showRPw, setShowRPw] = React.useState(false)
 
@@ -91,6 +95,20 @@ export default function AuthView() {
       })
       const json = await res.json()
       if (!res.ok) {
+        // TENANT LIFECYCLE: correct credentials but the org itself is not
+        // accessible — explain WHY instead of the generic invalid message.
+        if (json.error === 'org-pending') {
+          toast.error(t('auth.orgPending'), { duration: 8000 })
+          return
+        }
+        if (json.error === 'org-suspended') {
+          toast.error(t('auth.orgSuspended'), { duration: 8000 })
+          return
+        }
+        if (json.error === 'org-trial-expired') {
+          toast.error(t('auth.orgTrialExpired'), { duration: 8000 })
+          return
+        }
         toast.error(json.error === 'invalid' ? t('auth.invalidCreds') : t('common.error'))
         return
       }
@@ -122,7 +140,7 @@ export default function AuthView() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ orgName, name, email: rEmail, password: rPassword }),
+        body: JSON.stringify({ orgName, name, email: rEmail, phone: rPhone, password: rPassword }),
       })
       const json = await res.json()
       if (!res.ok) {
@@ -141,7 +159,9 @@ export default function AuthView() {
         }
         return
       }
-      setSession(json.data.user as SessionUser, json.data.org as OrgDTO)
+      // NO AUTO-LOGIN: registration now only SUBMITS the request — the org
+      // stays PENDING until the company approves it from its console.
+      setRegistered(true)
     } catch {
       toast.error(t('boot.failed'))
     } finally {
@@ -328,68 +348,116 @@ export default function AuthView() {
               </TabsContent>
 
               <TabsContent value="register">
-                <h1 className="text-xl font-bold">{t('auth.registerTitle')}</h1>
-                <p className="text-sm text-muted-foreground mb-5">{t('auth.registerSubtitle')}</p>
-                <form onSubmit={submitRegister} className="space-y-4">
-                  <div className="space-y-1.5">
-                    <Label htmlFor="orgName">{t('auth.orgName')}</Label>
-                    <Input id="orgName" value={orgName} onChange={(e) => setOrgName(e.target.value)} placeholder="سوبر ماركت النور" required />
+                {registered ? (
+                  <div
+                    role="status"
+                    aria-live="polite"
+                    className="flex flex-col items-center py-6 text-center"
+                  >
+                    <span className="flex size-16 items-center justify-center rounded-full bg-emerald-100 dark:bg-emerald-950">
+                      <CheckCircle2 className="size-9 text-emerald-600" aria-hidden />
+                    </span>
+                    <h1 className="mt-4 text-xl font-bold">{t('auth.pendingTitle')}</h1>
+                    <p className="mt-2 max-w-sm text-sm leading-relaxed text-muted-foreground">
+                      {t('auth.pendingDesc')}
+                    </p>
+                    <p className="mt-3 max-w-xs rounded-lg border border-dashed bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
+                      <span dir="ltr" className="font-medium">{rEmail}</span>
+                    </p>
+                    <Button
+                      variant="outline"
+                      className="mt-5 w-full h-11"
+                      onClick={() => {
+                        setRegistered(false)
+                        setMode('login')
+                      }}
+                    >
+                      {t('auth.pendingBack')}
+                    </Button>
                   </div>
-                  <div className="space-y-1.5">
-                    <Label htmlFor="name">{t('auth.yourName')}</Label>
-                    <Input id="name" value={name} onChange={(e) => setName(e.target.value)} placeholder="محمد أحمد" required />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label htmlFor="remail">{t('auth.email')}</Label>
-                    <Input
-                      id="remail"
-                      dir="ltr"
-                      inputMode="email"
-                      autoComplete="off"
-                      className="num-ltr text-start"
-                      value={rEmail}
-                      onChange={(e) => setREmail(e.target.value)}
-                      placeholder="you@example.com"
-                      required
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label htmlFor="rpass">{t('auth.password')}</Label>
-                    <div className="relative">
-                      <Input
-                        id="rpass"
-                        dir="ltr"
-                        type={showRPw ? 'text' : 'password'}
-                        minLength={6}
-                        autoComplete="new-password"
-                        className="pe-10 num-ltr text-start"
-                        value={rPassword}
-                        onChange={(e) => setRPassword(e.target.value)}
-                        placeholder="••••••••"
-                        required
-                      />
-                      <button
-                        type="button"
-                        className={eyeBtn}
-                        onClick={() => setShowRPw((v) => !v)}
-                        aria-label={showRPw ? t('set.hidePassword') : t('set.showPassword')}
-                        title={showRPw ? t('set.hidePassword') : t('set.showPassword')}
-                      >
-                        {showRPw ? <EyeOff className="size-4" aria-hidden /> : <Eye className="size-4" aria-hidden />}
-                      </button>
-                    </div>
-                  </div>
-                  <Button type="submit" disabled={busy} className="w-full h-11 text-base">
-                    {busy ? <Loader2 className="size-4 animate-spin" /> : null}
-                    {busy ? t('common.saving') : t('auth.register')}
-                  </Button>
-                </form>
-                <button
-                  onClick={() => setMode('login')}
-                  className="mt-4 text-sm text-muted-foreground hover:text-foreground transition-colors block mx-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded px-1"
-                >
-                  {t('auth.switchToLogin')}
-                </button>
+                ) : (
+                  <>
+                    <h1 className="text-xl font-bold">{t('auth.registerTitle')}</h1>
+                    <p className="text-sm text-muted-foreground mb-5">{t('auth.registerSubtitle')}</p>
+                    <form onSubmit={submitRegister} className="space-y-4">
+                      <div className="space-y-1.5">
+                        <Label htmlFor="orgName">{t('auth.orgName')}</Label>
+                        <Input id="orgName" value={orgName} onChange={(e) => setOrgName(e.target.value)} placeholder="عيادة النور لطب الأسنان" required />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="name">{t('auth.yourName')}</Label>
+                        <Input id="name" value={name} onChange={(e) => setName(e.target.value)} placeholder="محمد أحمد" required />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="remail">{t('auth.email')}</Label>
+                        <Input
+                          id="remail"
+                          dir="ltr"
+                          inputMode="email"
+                          autoComplete="off"
+                          className="num-ltr text-start"
+                          value={rEmail}
+                          onChange={(e) => setREmail(e.target.value)}
+                          placeholder="you@example.com"
+                          required
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="rphone">{t('auth.phone')}</Label>
+                        <Input
+                          id="rphone"
+                          dir="ltr"
+                          inputMode="tel"
+                          autoComplete="tel"
+                          className="num-ltr text-start"
+                          value={rPhone}
+                          onChange={(e) => setRPhone(e.target.value)}
+                          placeholder="01xxxxxxxxx"
+                        />
+                        <p className="text-xs text-muted-foreground">{t('auth.phoneHint')}</p>
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="rpass">{t('auth.password')}</Label>
+                        <div className="relative">
+                          <Input
+                            id="rpass"
+                            dir="ltr"
+                            type={showRPw ? 'text' : 'password'}
+                            minLength={6}
+                            autoComplete="new-password"
+                            className="pe-10 num-ltr text-start"
+                            value={rPassword}
+                            onChange={(e) => setRPassword(e.target.value)}
+                            placeholder="••••••••"
+                            required
+                          />
+                          <button
+                            type="button"
+                            className={eyeBtn}
+                            onClick={() => setShowRPw((v) => !v)}
+                            aria-label={showRPw ? t('set.hidePassword') : t('set.showPassword')}
+                            title={showRPw ? t('set.hidePassword') : t('set.showPassword')}
+                          >
+                            {showRPw ? <EyeOff className="size-4" aria-hidden /> : <Eye className="size-4" aria-hidden />}
+                          </button>
+                        </div>
+                      </div>
+                      <p className="rounded-lg border border-dashed bg-muted/40 px-3 py-2.5 text-xs leading-relaxed text-muted-foreground">
+                        {t('auth.registerHint')}
+                      </p>
+                      <Button type="submit" disabled={busy} className="w-full h-11 text-base">
+                        {busy ? <Loader2 className="size-4 animate-spin" /> : null}
+                        {busy ? t('common.saving') : t('auth.register')}
+                      </Button>
+                    </form>
+                    <button
+                      onClick={() => setMode('login')}
+                      className="mt-4 text-sm text-muted-foreground hover:text-foreground transition-colors block mx-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded px-1"
+                    >
+                      {t('auth.switchToLogin')}
+                    </button>
+                  </>
+                )}
               </TabsContent>
             </Tabs>
           </CardContent>

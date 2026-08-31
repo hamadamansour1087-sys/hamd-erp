@@ -1,29 +1,40 @@
 'use client'
 
+/**
+ * H.A.M.D — Marketing landing page.
+ *
+ * Company-first structure: who we are (about), the three programs we build
+ * (dental clinics / dental labs / inventory & POS), the services around them,
+ * then proof (videos, pricing, testimonials, FAQ).
+ *
+ * Content is Arabic-first by design (the target market is Arabic-speaking
+ * clinics, labs and shops); the product itself is bilingual. CTAs open the
+ * auth screen via onAuth — registration submits an APPROVAL REQUEST, it does
+ * not grant instant access (see views/auth + api/auth/register).
+ */
+
 import * as React from 'react'
 import { motion } from 'framer-motion'
 import {
-  ArrowRight,
-  BarChart3,
+  ArrowLeft,
   CheckCircle2,
-  Coffee,
-  FileText,
+  Code2,
+  FlaskConical,
+  Globe,
+  Headphones,
   Menu,
-  Pill,
   Play,
-  Printer,
   ShieldCheck,
-  ShoppingBasket,
   Smartphone,
   Sparkles,
   Star,
+  Stethoscope,
   Store,
   TrendingUp,
   Users,
-  UtensilsCrossed,
   Warehouse,
   WifiOff,
-  Zap,
+  Wrench,
   type LucideIcon,
 } from 'lucide-react'
 
@@ -58,69 +69,121 @@ type LandingPageProps = {
 /* ---------------------------------- data ---------------------------------- */
 
 const NAV_LINKS: ReadonlyArray<{ href: string; label: string }> = [
-  { href: '#features', label: 'المميزات' },
-  { href: '#how', label: 'كيف يعمل' },
+  { href: '#about', label: 'من نحن' },
+  { href: '#programs', label: 'برامجنا' },
+  { href: '#services', label: 'خدماتنا' },
   { href: '#videos', label: 'الفيديوهات' },
   { href: '#pricing', label: 'الأسعار' },
   { href: '#faq', label: 'الأسئلة الشائعة' },
 ]
 
-const CATEGORIES: ReadonlyArray<{ icon: LucideIcon; label: string }> = [
-  { icon: ShoppingBasket, label: 'بقالات وسوبر ماركت' },
-  { icon: UtensilsCrossed, label: 'مطاعم ومطابخ' },
-  { icon: Pill, label: 'صيدليات' },
-  { icon: Store, label: 'محلات تجزئة' },
-  { icon: Coffee, label: 'كافيهات' },
-  { icon: Sparkles, label: 'بوتيكات ومعارض' },
-]
+interface Program {
+  icon: LucideIcon
+  name: string
+  tagline: string
+  desc: string
+  features: ReadonlyArray<string>
+  gradient: string
+}
 
-const FEATURES: ReadonlyArray<{ icon: LucideIcon; title: string; desc: string }> = [
+const PROGRAMS: ReadonlyArray<Program> = [
   {
-    icon: Zap,
-    title: 'نقطة بيع فائقة السرعة',
-    desc: 'باركود، اختصارات كيبورد، وبيع في ثوانٍ دون أي تعقيد.',
+    icon: Stethoscope,
+    name: 'برنامج إدارة عيادات الأسنان',
+    tagline: 'عيادتك منظمة… ومريضك مطمئن',
+    desc: 'نظام متكامل يدير عيادة الأسنان من أول حجز موعد حتى تسليم الفاتورة — ملف طبي كامل لكل مريض ومتابعة دقيقة للخطط العلاجية.',
+    features: [
+      'ملف طبي كامل لكل مريض بتاريخه وأشعته',
+      'جدولة مواعيد الأطباء والكراسي البشتية',
+      'خطط علاجية بالجلسات وتكلفة كل جلسة',
+      'فواتير ومتابعة مدفوعات وأقساط المرضى',
+      'تقارير إنتاجية الأطباء وأكثر الخدمات طلبًا',
+      'تنبيهات متابعة المرضى والمواعيد القادمة',
+    ],
+    gradient: 'from-teal-500 to-emerald-700',
+  },
+  {
+    icon: FlaskConical,
+    name: 'برنامج إدارة معامل الأسنان',
+    tagline: 'من أمر الشغل… حتى التسليم',
+    desc: 'مصمم خصيصًا لمعامل التركيبات: تتبّع كل حالة شغل مرحلة بمرحلة، ومتابعة الفنيين، وحسابات دقيقة مع العيادات.',
+    features: [
+      'استقبال أوامر الشغل من العيادات إلكترونيًا',
+      'تتبع مراحل التصنيع (طبع، قوالب، خزف، تركيب)',
+      'متابعة إنتاج الفنيين ومواعيد التسليم',
+      'فواتير وحسابات جارية مع كل عيادة',
+      'سجل كامل لكل حالة وأسنان العملية',
+      'تقارير إنتاج المعمل والعملاء الأكثر تعاملًا',
+    ],
+    gradient: 'from-cyan-600 to-teal-700',
   },
   {
     icon: Warehouse,
-    title: 'مخازن متعددة وفروع',
-    desc: 'أرصدة لحظية، تحويلات بين المخازن، وجرد دوري منظم.',
-  },
-  {
-    icon: FileText,
-    title: 'فواتير بمصداقية احتراف',
-    desc: 'صمّم قالب فاتورتك بشعارك وألوانك وبياناتك الضريبية.',
-  },
-  {
-    icon: Printer,
-    title: 'طباعة حرارية و A4',
-    desc: 'رول 58mm و80mm للكاشير، وفواتير A4 رسمية للشركات.',
-  },
-  {
-    icon: BarChart3,
-    title: 'تقارير وأرباح لحظية',
-    desc: 'مبيعات، مصروفات، أرباح، وأرصدة عملاء وموردين في لوحة واحدة.',
-  },
-  {
-    icon: Users,
-    title: 'عملاء وموردون',
-    desc: 'كشوف حسابات تفصيلية، حدود ائتمان، ومتابعة التحصيل.',
-  },
-  {
-    icon: ShieldCheck,
-    title: 'صلاحيات مستخدمين',
-    desc: 'مدير وكاشير بأذونات منفصلة — كل واحد يرى ما يخصه فقط.',
-  },
-  {
-    icon: WifiOff,
-    title: 'يعمل أوفلاين',
-    desc: 'تابع البيع بدون إنترنت، والمزامنة تتم تلقائياً عند العودة.',
+    name: 'برنامج المخزون ونقاط البيع',
+    tagline: 'محلك كله… من شاشتك',
+    desc: 'نظام نقاط بيع ومخازن وفواتير يعمل أونلاين وأوفلاين — للبقالات والمحلات والصيدليات وأي نشاط يبيع ويشتري.',
+    features: [
+      'نقطة بيع فائقة السرعة بالباركود والاختصارات',
+      'مخازن متعددة وتحويلات وجرد دقيق',
+      'فواتير حرارية 58/80mm وفواتير A4 رسمية',
+      'عملاء وموردون وكشوف حسابات وحدود ائتمان',
+      'تقارير مبيعات وأرباح ومصروفات لحظية',
+      'يعمل بدون إنترنت والمزامنة تلقائية عند العودة',
+    ],
+    gradient: 'from-emerald-500 to-emerald-800',
   },
 ]
 
+interface Service {
+  icon: LucideIcon
+  title: string
+  desc: string
+}
+
+const SERVICES: ReadonlyArray<Service> = [
+  {
+    icon: Code2,
+    title: 'تطوير برامج مخصصة',
+    desc: 'نبني لك برنامجًا على مقاس نشاطك بالضبط — من فهم احتياجك حتى التسليم والتشغيل.',
+  },
+  {
+    icon: Smartphone,
+    title: 'تطبيقات موبايل',
+    desc: 'تطبيقات Android و iOS تربط عملاءك وموظفيك بنظامك في أي وقت ومن أي مكان.',
+  },
+  {
+    icon: Globe,
+    title: 'مواقع وتطبيقات ويب',
+    desc: 'مواقع تعريفية ومتاجر إلكترونية عصرية سريعة ومتوافقة مع الجوال ومحركات البحث.',
+  },
+  {
+    icon: Store,
+    title: 'أنظمة نقاط البيع والمخازن',
+    desc: 'حلول متكاملة للبيع والمخزون والفواتير — تشغيل سريع وربط بالطابعات الحرارية والباركود.',
+  },
+  {
+    icon: Headphones,
+    title: 'دعم فني وتدريب',
+    desc: 'فريق دعم يرد عليك بسرعة، وتدريب عملي لفريقك حتى يتقن النظام من أول يوم.',
+  },
+  {
+    icon: Wrench,
+    title: 'صيانة وتطوير مستمر',
+    desc: 'تحديثات دورية وأمان محدّث ونسخ احتياطية — نظامك يعمل دائمًا بأحدث إصدار.',
+  },
+]
+
+const ABOUT_STATS: ReadonlyArray<{ icon: LucideIcon; value: string; label: string }> = [
+  { icon: Sparkles, value: '٣ برامج متخصصة', label: 'عيادات ومعامل أسنان ومخازن ونقاط بيع' },
+  { icon: Users, value: 'عربي / إنجليزي', label: 'واجهة مزدوجة بقلب كامل RTL/LTR' },
+  { icon: WifiOff, value: 'أونلاين وأوفلاين', label: 'تشتغل حتى بدون إنترنت وتتزامن تلقائيًا' },
+  { icon: ShieldCheck, value: 'بياناتك ملكك', label: 'صلاحيات دقيقة ونسخ احتياطي بضغطة' },
+]
+
 const STEPS: ReadonlyArray<{ n: string; title: string; desc: string }> = [
-  { n: '١', title: 'أنشئ حسابك ومحلك', desc: 'تسجيل في دقيقة — اسم المحل، العملة، وبياناتك.' },
-  { n: '٢', title: 'أضف منتجاتك ومخازنك', desc: 'استورد منتجاتك من ملف CSV أو أضفها يدوياً بالباركود.' },
-  { n: '٣', title: 'ابدأ البيع وراقب أرباحك', desc: 'فاتورتك الأولى خلال دقائق، وتقارير لحظية من اليوم الأول.' },
+  { n: '١', title: 'أرسل طلبك', desc: 'سجّل بيانات نشاطك في دقيقة — وسيصلك تأكيد استلام الطلب فورًا.' },
+  { n: '٢', title: 'نراجع ونفعّل', desc: 'يتواصل معك فريق H.A.M.D ويفعّل حسابك وتبدأ فترتك التجريبية المجانية.' },
+  { n: '٣', title: 'ابدأ العمل', desc: 'إعداد كامل في أقل من عشر دقائق — أول فاتورة لك في نفس اليوم.' },
 ]
 
 const VIDEOS: ReadonlyArray<{
@@ -172,10 +235,10 @@ const PLANS: ReadonlyArray<{
   {
     name: 'تجريبي',
     price: 'مجاناً',
-    period: '٣٠ يوماً',
-    desc: 'جرّب النظام كاملاً بدون أي التزام.',
+    period: '١٤ يوماً',
+    desc: 'جرّب النظام كاملاً بعد الموافقة على طلبك — بدون أي التزام.',
     features: [
-      '٣٠ يوماً تجربة كاملة',
+      '١٤ يوماً تجربة كاملة بعد التفعيل',
       'كل المميزات مفتوحة',
       'بدون بطاقة ائتمان',
       'دعم عبر البريد',
@@ -186,27 +249,26 @@ const PLANS: ReadonlyArray<{
     name: 'أساسي',
     price: 'تواصل معنا',
     period: 'شهرياً',
-    desc: 'مثالي للمحلات الفردية.',
+    desc: 'مثالي للعيادات والمعامل والمحلات الفردية.',
     features: [
-      'نقطة بيع كاملة',
-      'فواتير احترافية',
-      'مخزن واحد',
-      'تقارير أساسية',
-      'جهاز واحد',
+      'نظامك كامل بكل الأقسام',
+      'فواتير احترافية بشعارك',
+      'دعم فني وتدريب الفريق',
+      'تحديثات مستمرة',
     ],
     highlighted: true,
-    cta: 'ابدأ الآن',
+    cta: 'اطلب عرض سعر',
   },
   {
     name: 'احترافي',
     price: 'تواصل معنا',
     period: 'شهرياً',
-    desc: 'للنشاطات التي تملك فروعاً ومخازن متعددة.',
+    desc: 'للنشاطات التي تملك فروعاً وعدة مستخدمين.',
     features: [
       'فروع ومخازن متعددة',
-      'مستخدمون بلا حدود',
+      'مستخدمون بلا حدود بصلاحيات دقيقة',
       'طباعة حرارية 58/80mm',
-      'نسخ احتياطي تلقائي',
+      'نسخ احتياطي ومتابعة أولوية',
     ],
     cta: 'تواصل معنا',
   },
@@ -214,23 +276,27 @@ const PLANS: ReadonlyArray<{
 
 const TESTIMONIALS: ReadonlyArray<{ quote: string; name: string; business: string }> = [
   {
-    quote: 'نظام بسيط وفهمته كاشيري في يوم واحد — مفيش تدريب ولا تعقيد.',
+    quote: 'برنامج العيادات وفّر علينا وقت الاستقبال كله — المواعيد والملفات والفواتير في مكان واحد.',
+    name: 'د. أحمد',
+    business: 'عيادة أسنان',
+  },
+  {
+    quote: 'أعرف كل حالة شغل وصلت لمرحلة إيه، والحسابات مع العيادات بقت مظبوطة لآخر قرش.',
     name: 'محمود',
-    business: 'سوبر ماركت النور',
+    business: 'معمل تركيبات أسنان',
   },
   {
-    quote: 'الطباعة الحرارية وفرت عليّ ورق كتير، والفاتورة بتتصدر في ثانية.',
+    quote: 'الكاشير اتعلمه في يوم، والطباعة الحرارية بتصدر الفاتورة في ثانية — وبيشتغل أوفلاين فعلاً.',
     name: 'سارة',
-    business: 'بوتيك بلس',
-  },
-  {
-    quote: 'بتابع مخازني من موبايلي وأنا برا المحل — التحديثات لحظية فعلاً.',
-    name: 'أحمد',
-    business: 'مطبعة الأمل',
+    business: 'سوبر ماركت',
   },
 ]
 
 const FAQS: ReadonlyArray<{ q: string; a: string }> = [
+  {
+    q: 'كيف يتم تفعيل حسابي بعد التسجيل؟',
+    a: 'بعد إرسال طلبك يراجعه فريق H.A.M.D ويتواصل معك لتأكيد البيانات، ثم يفعّل حسابك وتبدأ فترة التجربة المجانية ١٤ يومًا. لا يمكن الدخول للنظام قبل الموافقة — هذا يحمي النظام ويضمن لكل عميل بداية منظمة.',
+  },
   {
     q: 'هل يعمل بدون إنترنت؟',
     a: 'نعم، يمكنك البيع وإصدار الفواتير بدون شبكة تماماً، وعند عودة الاتصال تتم مزامنة كل شيء تلقائياً.',
@@ -240,20 +306,20 @@ const FAQS: ReadonlyArray<{ q: string; a: string }> = [
     a: 'نعم، يدعم رول 58mm و80mm للطباعة الحرارية إضافة إلى ورق A4 العادي للفواتير الرسمية.',
   },
   {
-    q: 'هل يمكنني استيراد منتجاتي؟',
-    a: 'نعم، عبر ملف CSV يمكنك استيراد كل منتجاتك بأسمائها وأسعارها وباركودها — ويمكنك كذلك تصدير بياناتك في أي وقت.',
+    q: 'هل البرنامج مناسب لعيادة أو معمل أسنان فقط أم للمحلات أيضاً؟',
+    a: 'نوفّر ثلاثة برامج متخصصة: برنامج إدارة عيادات الأسنان، وبرنامج إدارة معامل الأسنان، وبرنامج المخزون ونقاط البيع للمحلات — وكلها تشترك في نفس الجودة والفواتير والتقارير والدعم.',
+  },
+  {
+    q: 'هل يمكن استيراد بياناتي الحالية؟',
+    a: 'نعم، عبر ملف CSV يمكنك استيراد منتجاتك وعملائك — ويمكنك تصدير بياناتك في أي وقت، ونسخة احتياطية كاملة بضغطة واحدة.',
   },
   {
     q: 'هل بياناتي آمنة؟',
-    a: 'بياناتك محفوظة على جهازك/سيرفرك وتملكها أنت وحدك، مع إمكانية أخذ نسخة احتياطية كاملة JSON بضغطة واحدة.',
+    a: 'بياناتك محفوظة على سيرفرك وتملكها أنت وحدك، مع صلاحيات مستخدمين دقيقة وسجل كامل لكل حركة، وإمكانية أخذ نسخة احتياطية في أي لحظة.',
   },
   {
     q: 'هل يعمل على الموبايل؟',
     a: 'نعم، التصميم متكيف بالكامل مع شاشات الجوال، ويمكنك تثبيت النظام كتطبيق PWA على شاشتك الرئيسية.',
-  },
-  {
-    q: 'هل اللغة الإنجليزية مدعومة؟',
-    a: 'نعم، تبديل فوري بين العربية والإنجليزية مع قلب كامل لاتجاه الواجهة RTL/LTR.',
   },
 ]
 
@@ -334,7 +400,7 @@ function LandingHeader({ onAuth }: { onAuth: () => void }) {
             <Button variant="ghost" onClick={onAuth}>
               تسجيل الدخول
             </Button>
-            <Button onClick={onAuth}>ابدأ الآن</Button>
+            <Button onClick={onAuth}>اطلب تفعيل حسابك</Button>
           </div>
 
           {/* mobile menu */}
@@ -381,7 +447,7 @@ function LandingHeader({ onAuth }: { onAuth: () => void }) {
                       onAuth()
                     }}
                   >
-                    ابدأ الآن
+                    اطلب تفعيل حسابك
                   </Button>
                 </div>
               </nav>
@@ -434,7 +500,7 @@ function Hero({ onAuth }: { onAuth: () => void }) {
         >
           <span className="inline-flex items-center gap-1.5 rounded-full border bg-muted/60 px-3.5 py-1.5 text-sm text-muted-foreground">
             <Sparkles className="size-3.5 text-primary" aria-hidden />
-            جديد — يعمل بدون إنترنت
+            شركة H.A.M.D للحلول البرمجية
           </span>
         </motion.div>
 
@@ -444,9 +510,9 @@ function Hero({ onAuth }: { onAuth: () => void }) {
           transition={{ duration: 0.5, delay: 0.08, ease: 'easeOut' }}
           className="mt-5 text-4xl font-black leading-[1.2] tracking-tight md:text-6xl"
         >
-          أدر محلك ومخازنك…
+          برامج إدارة عيادات ومعامل الأسنان
           <br />
-          من مكان واحد
+          والمخزون ونقاط البيع
         </motion.h1>
 
         <motion.p
@@ -455,8 +521,8 @@ function Hero({ onAuth }: { onAuth: () => void }) {
           transition={{ duration: 0.5, delay: 0.16, ease: 'easeOut' }}
           className="mx-auto mt-5 max-w-2xl text-lg text-muted-foreground md:text-xl"
         >
-          H.A.M.D نظام متكامل لنقاط البيع والمخازن والفواتير — بالعربية والإنجليزية، على
-          الكمبيوتر والموبايل، أونلاين وأوفلاين.
+          H.A.M.D شركة برمجيات متخصصة في أنظمة إدارة الأعمال — نبني لك برنامجًا يدير نشاطك
+          بالكامل: بالعربية والإنجليزية، على الكمبيوتر والموبايل، أونلاين وأوفلاين.
         </motion.p>
 
         <motion.div
@@ -466,10 +532,10 @@ function Hero({ onAuth }: { onAuth: () => void }) {
           className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row"
         >
           <Button onClick={onAuth} size="lg" className="h-12 px-8 text-base font-bold shadow-md">
-            ابدأ الآن مجاناً
+            اطلب تفعيل حسابك مجاناً
           </Button>
           <Button asChild variant="outline" size="lg" className="h-12 px-8 text-base">
-            <a href="#videos">شاهد الفيديوهات التعليمية</a>
+            <a href="#programs">تعرّف على برامجنا</a>
           </Button>
         </motion.div>
 
@@ -479,7 +545,7 @@ function Hero({ onAuth }: { onAuth: () => void }) {
           transition={{ duration: 0.5, delay: 0.34 }}
           className="mt-4 text-sm text-muted-foreground"
         >
-          بدون بطاقة ائتمان · إعداد في دقيقة · بياناتك ملكك
+          مراجعة سريعة للطلبات · ١٤ يوم تجربة مجانية · بياناتك ملكك
         </motion.p>
       </div>
 
@@ -537,48 +603,138 @@ function Hero({ onAuth }: { onAuth: () => void }) {
   )
 }
 
-/* ------------------------------ trust + features --------------------------- */
+/* ---------------------------------- about --------------------------------- */
 
-function TrustStrip() {
+function About() {
   return (
-    <section className="border-y bg-muted/30 py-10" aria-label="القطاعات المخدومة">
-      <div className="mx-auto max-w-6xl px-4 text-center">
-        <Reveal>
-          <p className="text-sm text-muted-foreground">موثوق من محلات ومطاعم وصيدليات وسوبر ماركت</p>
-          <ul className="mt-5 flex flex-wrap items-center justify-center gap-2.5 md:gap-3">
-            {CATEGORIES.map((cat) => (
-              <li
-                key={cat.label}
-                className="inline-flex items-center gap-2 rounded-full border bg-card px-4 py-2 text-sm text-foreground/80 shadow-sm"
-              >
-                <cat.icon className="size-4 text-primary" aria-hidden />
-                {cat.label}
-              </li>
+    <section
+      id="about"
+      className="scroll-mt-24 border-y bg-muted/30 py-16 md:py-24"
+      aria-label="من نحن"
+    >
+      <div className="mx-auto max-w-6xl px-4">
+        <SectionHeading
+          title="من نحن؟"
+          sub="شركة H.A.M.D للحلول البرمجية — نبني أنظمة إدارة تفهم صاحب العمل وتخدم عملاءه."
+        />
+        <div className="grid items-center gap-10 lg:grid-cols-2 lg:gap-14">
+          <Reveal>
+            <div className="space-y-4 text-lg leading-relaxed text-muted-foreground">
+              <p>
+                <strong className="text-foreground">H.A.M.D</strong> شركة برمجيات متخصصة في تطوير
+                أنظمة إدارة الأعمال العربية. نحن لا نبيع «برنامج جاهز لأي حد» — بل نفهم طبيعة
+                نشاطك أولًا: العيادة لها سير عمل مختلف عن المعمل، والمعمل مختلف عن المحل، ونبني
+                لكل نشاط نظامًا يخدمه فعلاً.
+              </p>
+              <p>
+                رسالتنا بسيطة: أن يدير صاحب العمل نشاطه من مكان واحد — مريضاته أو حالاته أو
+                مخزونه أو فواتيره أو أرباحه — بدون دفاتر ولا جداول إكسل متفرقة، ومن أي جهاز:
+                كمبيوتر الكلينيك، موبايل المدير، أو جهاز الكاشير.
+              </p>
+              <p>
+                كل برامجنا تشترك في نفس المبادئ: عربية أولاً مع دعم إنجليزي كامل، عمل أونلاين
+                وأوفلاين، صلاحيات مستخدمين دقيقة، فواتير احترافية بشعارك، وتقارير تُدعم القرار
+                لحظة بلحظة — مع دعم فني حقيقي يرد عليك.
+              </p>
+            </div>
+          </Reveal>
+          <div className="grid gap-4 sm:grid-cols-2">
+            {ABOUT_STATS.map((stat, i) => (
+              <Reveal key={stat.value} delay={i * 0.07} className="h-full">
+                <div className="flex h-full flex-col gap-3 rounded-2xl border bg-card p-5 shadow-sm">
+                  <span className="flex size-11 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                    <stat.icon className="size-5" aria-hidden />
+                  </span>
+                  <p className="text-xl font-black leading-snug">{stat.value}</p>
+                  <p className="text-sm leading-relaxed text-muted-foreground">{stat.label}</p>
+                </div>
+              </Reveal>
             ))}
-          </ul>
-        </Reveal>
+          </div>
+        </div>
       </div>
     </section>
   )
 }
 
-function Features() {
+/* -------------------------------- programs -------------------------------- */
+
+function ProgramCard({ program, onAuth, delay }: { program: Program; onAuth: () => void; delay: number }) {
   return (
-    <section id="features" className="scroll-mt-24 py-16 md:py-24" aria-label="المميزات">
+    <Reveal delay={delay} className="h-full">
+      <div className="flex h-full flex-col overflow-hidden rounded-2xl border bg-card shadow-sm transition-shadow hover:shadow-md">
+        <div className={`flex items-center gap-4 bg-gradient-to-br ${program.gradient} p-6 text-white`}>
+          <span className="flex size-14 shrink-0 items-center justify-center rounded-2xl bg-white/15 backdrop-blur">
+            <program.icon className="size-7" aria-hidden />
+          </span>
+          <div className="min-w-0">
+            <h3 className="text-lg font-extrabold leading-snug">{program.name}</h3>
+            <p className="mt-1 text-sm text-white/85">{program.tagline}</p>
+          </div>
+        </div>
+        <div className="flex flex-1 flex-col p-6">
+          <p className="text-sm leading-relaxed text-muted-foreground">{program.desc}</p>
+          <ul className="mt-5 flex flex-col gap-2.5">
+            {program.features.map((f) => (
+              <li key={f} className="flex items-start gap-2 text-sm">
+                <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden />
+                {f}
+              </li>
+            ))}
+          </ul>
+          <div className="mt-auto pt-6">
+            <Button onClick={onAuth} variant="outline" className="h-11 w-full gap-1.5 font-bold">
+              اطلب هذا البرنامج
+              <ArrowLeft className="size-4" aria-hidden />
+            </Button>
+          </div>
+        </div>
+      </div>
+    </Reveal>
+  )
+}
+
+function Programs({ onAuth }: { onAuth: () => void }) {
+  return (
+    <section id="programs" className="scroll-mt-24 py-16 md:py-24" aria-label="برامجنا">
       <div className="mx-auto max-w-6xl px-4">
         <SectionHeading
-          title="كل ما يحتاجه محلك في نظام واحد"
-          sub="من أول باركود حتى تقرير الأرباح — H.A.M.D يغنيك عن الدفاتر وجداول الإكسل المتفرقة."
+          title="برامجنا الثلاثة"
+          sub="ثلاثة أنظمة متخصصة بنيتها H.A.M.D — اختر ما يناسب نشاطك، أو تواصل معنا لبرنامج مخصص لك."
         />
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:gap-6 lg:grid-cols-4">
-          {FEATURES.map((feature, i) => (
-            <Reveal key={feature.title} delay={(i % 4) * 0.06} className="h-full">
+        <div className="grid gap-6 lg:grid-cols-3">
+          {PROGRAMS.map((p, i) => (
+            <ProgramCard key={p.name} program={p} onAuth={onAuth} delay={i * 0.08} />
+          ))}
+        </div>
+      </div>
+    </section>
+  )
+}
+
+/* -------------------------------- services -------------------------------- */
+
+function Services() {
+  return (
+    <section
+      id="services"
+      className="scroll-mt-24 border-y bg-muted/30 py-16 md:py-24"
+      aria-label="خدماتنا"
+    >
+      <div className="mx-auto max-w-6xl px-4">
+        <SectionHeading
+          title="خدماتنا"
+          sub="أكثر من برنامج جاهز — فريق برمجي كامل يرافقك قبل التشغيل وبعده."
+        />
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:gap-6 lg:grid-cols-3">
+          {SERVICES.map((service, i) => (
+            <Reveal key={service.title} delay={(i % 3) * 0.06} className="h-full">
               <div className="h-full rounded-2xl border bg-card p-6 shadow-sm transition-shadow hover:shadow-md">
                 <div className="flex size-11 items-center justify-center rounded-xl bg-primary/10 text-primary">
-                  <feature.icon className="size-5" aria-hidden />
+                  <service.icon className="size-5" aria-hidden />
                 </div>
-                <h3 className="mt-4 font-bold">{feature.title}</h3>
-                <p className="mt-1.5 text-sm leading-relaxed text-muted-foreground">{feature.desc}</p>
+                <h3 className="mt-4 font-bold">{service.title}</h3>
+                <p className="mt-1.5 text-sm leading-relaxed text-muted-foreground">{service.desc}</p>
               </div>
             </Reveal>
           ))}
@@ -594,13 +750,13 @@ function HowItWorks() {
   return (
     <section
       id="how"
-      className="scroll-mt-24 border-y bg-muted/30 py-16 md:py-24"
-      aria-label="كيف يعمل"
+      className="scroll-mt-24 py-16 md:py-24"
+      aria-label="كيف تبدأ"
     >
       <div className="mx-auto max-w-6xl px-4">
         <SectionHeading
           title="ابدأ في ثلاث خطوات"
-          sub="لا تحتاج خبرة تقنية — إعداد كامل في أقل من عشر دقائق."
+          sub="لا تحتاج خبرة تقنية — تسجيل الطلب في دقيقة، والتفعيل من فريقنا."
         />
         <div className="relative grid gap-10 md:grid-cols-3 md:gap-6">
           {/* dashed connector (desktop) */}
@@ -636,13 +792,13 @@ function Videos() {
   return (
     <section
       id="videos"
-      className="scroll-mt-24 py-16 md:py-24"
+      className="scroll-mt-24 border-y bg-muted/30 py-16 md:py-24"
       aria-label="الفيديوهات التعليمية"
     >
       <div className="mx-auto max-w-6xl px-4">
         <SectionHeading
           title="تعلّم H.A.M.D في دقائق"
-          sub="فيديوهات تعليمية قصيرة — نص عربي واضح مع موسيقى هادئة."
+          sub="فيديوهات تعليمية قصيرة — شرح عربي واضح لمميزات النظام."
         />
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:gap-6 lg:grid-cols-4">
           {VIDEOS.map((video, i) => (
@@ -707,13 +863,13 @@ function Pricing({ onAuth }: { onAuth: () => void }) {
   return (
     <section
       id="pricing"
-      className="scroll-mt-24 border-y bg-muted/30 py-16 md:py-24"
+      className="scroll-mt-24 py-16 md:py-24"
       aria-label="الأسعار"
     >
       <div className="mx-auto max-w-6xl px-4">
         <SectionHeading
           title="أسعار واضحة — ابدأ مجاناً"
-          sub="جرّب كل المميزات ٣٠ يوماً بدون بطاقة ائتمان، واختر الباقة التي تناسب محلك."
+          sub="بعد الموافقة على طلبك تحصل على ١٤ يوم تجربة كاملة بدون بطاقة ائتمان، ثم تختار الباقة التي تناسبك."
         />
         <div className="mx-auto grid max-w-5xl items-stretch gap-6 lg:grid-cols-3">
           {PLANS.map((plan, i) => (
@@ -764,11 +920,14 @@ function Pricing({ onAuth }: { onAuth: () => void }) {
 
 function Testimonials() {
   return (
-    <section className="py-16 md:py-24" aria-label="آراء العملاء">
+    <section
+      className="border-y bg-muted/30 py-16 md:py-24"
+      aria-label="آراء العملاء"
+    >
       <div className="mx-auto max-w-6xl px-4">
         <SectionHeading
-          title="أصحاب محلات بيتكلموا عنّا"
-          sub="آلاف الفواتير تُصدر يومياً عبر H.A.M.D في محلات مثل محلك."
+          title="عملاؤنا يتحدثون"
+          sub="عيادات ومعامل ومحلات تدير أعمالها يوميًا عبر برامج H.A.M.D."
         />
         <div className="grid grid-cols-1 gap-4 md:grid-cols-3 md:gap-6">
           {TESTIMONIALS.map((item, i) => (
@@ -809,7 +968,7 @@ function Faq() {
   return (
     <section
       id="faq"
-      className="scroll-mt-24 border-t bg-muted/30 py-16 md:py-24"
+      className="scroll-mt-24 py-16 md:py-24"
       aria-label="الأسئلة الشائعة"
     >
       <div className="mx-auto max-w-3xl px-4">
@@ -874,15 +1033,17 @@ function FinalCta({ onAuth }: { onAuth: () => void }) {
               className="absolute -bottom-24 -start-20 size-80 rounded-full bg-black/10"
             />
             <div className="relative">
-              <h2 className="text-3xl font-black tracking-tight md:text-4xl">جاهز تطوّر محلك؟</h2>
+              <h2 className="text-3xl font-black tracking-tight md:text-4xl">
+                جاهز تدير نشاطك باحتراف؟
+              </h2>
               <p className="mx-auto mt-3 max-w-xl text-emerald-50/90 md:text-lg">
-                انضم لآلاف المحلات التي تدير مخازنها ومبيعاتها بذكاء — ابدأ مجاناً اليوم.
+                أرسل طلبك الآن — يراجعه فريق H.A.M.D ويفعّل حسابك وتبدأ تجربتك المجانية ١٤ يومًا.
               </p>
               <Button
                 onClick={onAuth}
                 className="mt-8 h-12 bg-white px-8 text-base font-bold text-emerald-700 shadow-lg hover:bg-emerald-50"
               >
-                ابدأ الآن مجاناً
+                اطلب تفعيل حسابك مجاناً
               </Button>
               <div>
                 <InstallAppCta />
@@ -902,11 +1063,19 @@ const FOOTER_COLS: ReadonlyArray<{
   links: ReadonlyArray<{ label: string; href: string }>
 }> = [
   {
-    title: 'المنتج',
+    title: 'برامجنا',
     links: [
-      { label: 'المميزات', href: '#features' },
+      { label: 'إدارة عيادات الأسنان', href: '#programs' },
+      { label: 'إدارة معامل الأسنان', href: '#programs' },
+      { label: 'المخزون ونقاط البيع', href: '#programs' },
+    ],
+  },
+  {
+    title: 'الشركة',
+    links: [
+      { label: 'من نحن', href: '#about' },
+      { label: 'خدماتنا', href: '#services' },
       { label: 'الأسعار', href: '#pricing' },
-      { label: 'الفيديوهات', href: '#videos' },
       { label: 'الأسئلة الشائعة', href: '#faq' },
     ],
   },
@@ -914,15 +1083,7 @@ const FOOTER_COLS: ReadonlyArray<{
     title: 'الدعم',
     links: [
       { label: 'تواصل معنا — support@hamd.app', href: 'mailto:support@hamd.app' },
-      { label: 'دليل الاستخدام', href: '#videos' },
-    ],
-  },
-  {
-    title: 'النظام',
-    links: [
-      { label: 'يعمل أوفلاين', href: '#features' },
-      { label: 'تطبيق PWA', href: '#faq' },
-      { label: 'عربي / إنجليزي', href: '#faq' },
+      { label: 'الفيديوهات التعليمية', href: '#videos' },
     ],
   },
 ]
@@ -938,8 +1099,8 @@ function Footer() {
               <span className="text-lg font-extrabold tracking-tight">H.A.M.D</span>
             </div>
             <p className="mt-3 max-w-xs text-sm leading-relaxed text-muted-foreground">
-              نظام إدارة محلات ومخازن متكامل — بالعربية والإنجليزية، على الكمبيوتر والموبايل،
-              أونلاين وأوفلاين.
+              شركة H.A.M.D للحلول البرمجية — برامج إدارة عيادات ومعامل الأسنان والمخزون ونقاط
+              البيع، بالعربية والإنجليزية، على الكمبيوتر والموبايل، أونلاين وأوفلاين.
             </p>
           </div>
           {FOOTER_COLS.map((col) => (
@@ -961,8 +1122,8 @@ function Footer() {
           ))}
         </div>
         <div className="mt-10 flex flex-col items-center justify-between gap-2 border-t pt-6 text-xs text-muted-foreground sm:flex-row">
-          <p>© 2026 H.A.M.D — جميع الحقوق محفوظة</p>
-          <p>صُنع بعناية لأصحاب المحلات ❤</p>
+          <p>© {new Date().getFullYear()} H.A.M.D — جميع الحقوق محفوظة</p>
+          <p>شركة للحلول البرمجية · برامج إدارة الأعمال</p>
         </div>
       </div>
     </footer>
@@ -986,8 +1147,9 @@ export default function LandingPage({ onAuth }: LandingPageProps) {
       <LandingHeader onAuth={onAuth} />
       <main className="flex-1">
         <Hero onAuth={onAuth} />
-        <TrustStrip />
-        <Features />
+        <About />
+        <Programs onAuth={onAuth} />
+        <Services />
         <HowItWorks />
         <Videos />
         <Pricing onAuth={onAuth} />

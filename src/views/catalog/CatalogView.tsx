@@ -969,6 +969,8 @@ function ProductFormDialog({
       close()
     } catch (e) {
       if (isQueued(e)) toast.info(t('common.savedOffline'))
+      else if (e instanceof ApiError && e.message === 'trial-limit-products')
+        toast.error(t('toast.trialLimitProducts'), { duration: 8000 })
       else toast.error(apiErrText(t, e))
     } finally {
       setSaving(false)

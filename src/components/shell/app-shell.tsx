@@ -10,6 +10,7 @@ import { useI18n } from '@/lib/i18n'
 import { canAccess, useUIStore, type ViewKey } from '@/stores/ui'
 import { useSession } from '@/stores/session'
 import { cn } from '@/lib/utils'
+import { trialDaysLeft } from '@/lib/tenant'
 import { Button } from '@/components/ui/button'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
@@ -308,11 +309,38 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <DesktopSidebar />
       <div className="flex min-w-0 flex-1 flex-col">
         <Topbar />
+        <TrialBanner />
         <main id="main-content" className="flex-1 px-3 py-4 md:px-6 md:py-6 w-full max-w-screen-2xl mx-auto">
           {children}
         </main>
         <AppFooter />
       </div>
+    </div>
+  )
+}
+
+/**
+ * TRIAL BANNER — persistent reminder while the tenant is on its free trial.
+ * Reads the lifecycle fields the server now returns in every bootstrap/login
+ * payload; renders nothing for ACTIVE/PENDING/SUSPENDED orgs.
+ */
+function TrialBanner() {
+  const org = useSession((s) => s.org)
+  const { t } = useI18n()
+  if (!org || org.status !== 'TRIAL') return null
+  const days = trialDaysLeft(org.trialEndsAt)
+  return (
+    <div
+      role="status"
+      className={cn(
+        'flex flex-wrap items-center justify-center gap-x-3 gap-y-1 border-b px-4 py-2 text-center text-xs md:text-sm',
+        'bg-amber-50 text-amber-900 border-amber-200 dark:bg-amber-950/60 dark:text-amber-200 dark:border-amber-900'
+      )}
+    >
+      <span aria-hidden>⏳</span>
+      <span className="font-semibold">{t('trial.bannerDays', { days })}</span>
+      <span className="hidden sm:inline text-amber-700 dark:text-amber-300">·</span>
+      <span>{t('trial.contactActivate')} — support@hamd.app</span>
     </div>
   )
 }

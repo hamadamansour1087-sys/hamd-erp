@@ -5,7 +5,7 @@ export interface SessionUser {
   orgId: string
   email: string
   name: string
-  role: 'ADMIN' | 'MANAGER' | 'CASHIER'
+  role: 'ADMIN' | 'MANAGER' | 'CASHIER' | 'SUPERADMIN'
 }
 
 export interface OrgDTO {
@@ -16,6 +16,10 @@ export interface OrgDTO {
   phone: string | null
   address: string | null
   logo: string | null
+  // Tenant lifecycle (bootstrap/login payloads only; optional so stale
+  // offline caches keep decoding without a migration).
+  status?: 'PENDING' | 'TRIAL' | 'ACTIVE' | 'SUSPENDED'
+  trialEndsAt?: string | null
 }
 
 export interface LevelDTO {

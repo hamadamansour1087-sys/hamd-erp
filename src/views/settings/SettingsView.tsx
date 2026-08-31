@@ -1068,7 +1068,10 @@ type TabKey = 'org' | 'appearance' | 'users' | 'data' | 'about'
 
 export default function SettingsView() {
   const { t } = useI18n()
-  const role = useSession((s) => s.user?.role) ?? 'ADMIN'
+  const sessionRole = useSession((s) => s.user?.role)
+  // SUPERADMIN never reaches the tenant settings (platform console instead);
+  // narrowing keeps the shared Role contract honest.
+  const role: Role = sessionRole === 'SUPERADMIN' ? 'ADMIN' : (sessionRole ?? 'ADMIN')
   const selfId = useSession((s) => s.user?.id) ?? ''
   const [tab, setTab] = React.useState<TabKey>('org')
 

@@ -424,6 +424,8 @@ export default function POSView() {
           method,
           queued: true,
         })
+      } else if (err instanceof ApiError && err.message === 'trial-limit-invoices') {
+        toast.error(t('toast.trialLimitInvoices'), { duration: 8000 })
       } else {
         toast.error(t('common.error'))
       }

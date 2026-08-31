@@ -29,6 +29,20 @@ model Org {
   // Stock TRANSFERS always enforce stock >= requested regardless of this
   // flag (a transfer cannot move goods a warehouse does not have).
   allowNegativeStock Boolean @default(true)
+  // ---- Tenant lifecycle (subscription control) ----
+  // ACTIVE (default — grandfathered for pre-existing tenants) | PENDING (new
+  // registration awaiting company approval — zero API access) | TRIAL (approved,
+  // free trial with usage caps until trialEndsAt) | SUSPENDED (admin-blocked).
+  // Enforcement is server-side and centralised: lib/auth.getSession refuses
+  // sessions whose org is not accessible, so EVERY authenticated route is
+  // covered by construction; login additionally returns a specific error code
+  // so the UI can explain WHY (pending / suspended / trial-expired).
+  status          String   @default("ACTIVE")
+  // Trial window anchor set at approval time; NULL for ACTIVE/PENDING orgs.
+  trialEndsAt     DateTime?
+  approvedAt      DateTime?
+  // Internal note from the platform admin (why suspended, contact info, ...).
+  adminNote       String?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
