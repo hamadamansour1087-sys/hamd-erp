@@ -131,3 +131,27 @@
 
 ## الملفات المتغيرة (commit b806bb8)
 `.gitignore`، `db/custom.db` (فصل من Git فقط)، `public/sw.js`، `public/sw-manifest.json`، `scripts/restore-preview.sh`، `scripts/audit-restore-drill.sh` (جديد)، 10 ملفات API/lib/views، `tests/security/offline-queue.test.ts` (جديد)، + تقارير: `SECURITY-AUDIT.md` (Round 2)، `PRODUCTION-READINESS.md`، `DEPLOYMENT.md`، `WORKLOG.md`
+
+---
+
+# 🔁 Round 4 — توحيد وثائق النشر على PostgreSQL (2026-09-01)
+
+**المحفّز:** بلاغ تناقض وثائقي — `DEPLOY.md` الجذري ما يزال يعلّم نشر إنتاج SQLite (قاعدة `file:`، Volume للملف، cron `cp custom.db`، Vercel «غير مناسب»، وتعليمة حذف `db/custom.db`) بينما المعمارية الفعلية PostgreSQL إلزاميًا (Prisma provider=postgresql، Neon+Vercel هدف النشر).
+
+**FIND:**
+- مسح كل وثائق النشر: `DEPLOY.md` 🔴 (إعادة كتابة) | `docs/PRODUCTION-DEPLOYMENT.md` / `docs/DEPLOY-VERCEL.md` / `DEPLOYMENT.md` / `docs/DATABASE-MIGRATION.md` / `docs/DISASTER-RECOVERY.md` 🟢 سليمة | ذكر SQLite في سجلات التدقيق التاريخية (SECURITY-AUDIT/MONEY-AUDIT/FINAL-REPORT/SCALING) مقبول لأنه سجل/ترحيل.
+- فحص إضافي كشف R4-2: `package.json` build بلا `--webpack` — `bun run build` أنتج أصل Turbopack (61 أصلًا) يخالف الوثائق والأصل المُتحقق (webpack، 103).
+
+**FIX:**
+- R4-1: إعادة كتابة `DEPLOY.md` كاملة — PostgreSQL حصرًا، `bun run db:deploy` فقط، Vercel+Neon مدعوم رسميًا، نسخ احتياطي `pg_dump` + `pg-restore-verify.sh` خارجي، قسم ترحيل وحيد يوجه إلى `docs/DATABASE-MIGRATION.md`، صريح بمنع `db push` ومنع حذف `db/custom.db`، وأخطاء شائعة PostgreSQL (P1001/P1003/AUTH_SECRET/TRUST_PROXY).
+- R4-2: تثبيت `next build --webpack` في package.json — أوامر البناء أصبحت متطابقة مع الموثق على كل المنصات.
+- R4-3: `docs/DEPLOY-VERCEL.md` — صياغة مشروطة لمصدر بيانات الترحيل توافق سجل حادثة فقدان الأرشيف.
+
+**TEST/VERIFY (نُفذ فعليًا، لا PASS بلا تشغيل):**
+- `bun run lint` 0 | `bun run typecheck` 0 | `bun test tests/security` **191/191** | `bun run build` (webpack مثبّت) OK — 103 أصل SW بنمط webpack مطابق للراند-3.
+- إعادة تشغيل daemon بالأصل الجديد (`daemon-start.mjs` — تجاوز علة DATABASE_URL المسربة في جلسة المعاينة): health `db:ok` · `/` 200 · أصل ثابت من manifest الجديد 200 · `POST /api/auth/login` 200.
+- grep نهائي: صفر تعليمات SQLite إنتاجية في وثائق النشر، وكل ذكر `db push` فيها نهي. `.env.example` مطابق للمعمارية. `db/custom.db` غير متتبع. لا `git push`.
+
+**القرار:** 🟢 GO دون تغيير — وثائق النشر أصبحت متسقة تمامًا مع المعمارية (PostgreSQL + migrate deploy).
+
+**الملفات المتغيرة (الراند 4):** `DEPLOY.md`، `docs/DEPLOY-VERCEL.md`، `package.json` (سكربت build فقط)، `public/sw-manifest.json` (إعادة توليد)، `PRODUCTION-READINESS.md` (§7)، `WORKLOG.md` (هذا القسم).
