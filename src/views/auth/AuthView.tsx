@@ -1,7 +1,7 @@
 'use client'
 
 import * as React from 'react'
-import { BarChart3, Boxes, CheckCircle2, Copy, Eye, EyeOff, Loader2, Package, WifiOff, Zap } from 'lucide-react'
+import { BarChart3, Boxes, CheckCircle2, Eye, EyeOff, Loader2, Package, WifiOff, Zap } from 'lucide-react'
 import { toast } from 'sonner'
 
 import { useI18n } from '@/lib/i18n'
@@ -14,33 +14,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Card, CardContent } from '@/components/ui/card'
 import type { OrgDTO, SessionUser } from '@/lib/types'
 
-const DEMO = { email: 'admin@tijara.app', password: '123456' }
 const LOGIN_HINT_KEY = 'tijara-login-hint'
-
-async function copyText(text: string) {
-  try {
-    if (navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(text)
-      return true
-    }
-    throw new Error('no-clipboard')
-  } catch {
-    // fallback for older WebView / non-secure contexts
-    try {
-      const ta = document.createElement('textarea')
-      ta.value = text
-      ta.style.position = 'fixed'
-      ta.style.opacity = '0'
-      document.body.appendChild(ta)
-      ta.select()
-      const okFlag = document.execCommand('copy')
-      document.body.removeChild(ta)
-      return okFlag
-    } catch {
-      return false
-    }
-  }
-}
 
 export default function AuthView() {
   const setSession = useSession((s) => s.setSession)
@@ -169,19 +143,6 @@ export default function AuthView() {
     }
   }
 
-  function fillDemo() {
-    setEmail(DEMO.email)
-    setPassword(DEMO.password)
-  }
-
-  function demoCopy(e: React.SyntheticEvent, value: string) {
-    e.stopPropagation()
-    e.preventDefault()
-    void copyText(value).then((okFlag) =>
-      okFlag ? toast.success(t('common.copySuccess')) : toast.error(t('common.error'))
-    )
-  }
-
   const eyeBtn =
     'absolute end-1 top-1/2 -translate-y-1/2 inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring'
 
@@ -262,7 +223,7 @@ export default function AuthView() {
                       inputMode="email"
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
-                      placeholder="admin@tijara.app"
+                      placeholder={t('auth.emailPlaceholder')}
                       required
                     />
                   </div>
@@ -305,39 +266,6 @@ export default function AuthView() {
                     {busy ? t('auth.loggingIn') : t('auth.login')}
                   </Button>
                 </form>
-
-                {/* Demo account — whole tile clickable + per-field copy */}
-                <div
-                  role="button"
-                  tabIndex={0}
-                  onClick={fillDemo}
-                  onKeyDown={(e) => {
-                    if (e.key !== 'Enter' && e.key !== ' ') return
-                    if (e.target !== e.currentTarget) return
-                    e.preventDefault()
-                    fillDemo()
-                  }}
-                  className="mt-4 w-full rounded-lg border border-dashed border-emerald-300 dark:border-emerald-800 px-3 py-2.5 text-start hover:bg-accent transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
-                >
-                  <span className="font-semibold">{t('auth.demoTitle')}</span>
-                  <span
-                    dir="ltr"
-                    className="num-ltr mt-1 flex items-center justify-between gap-2 text-xs text-muted-foreground"
-                  >
-                    <span className="truncate">{DEMO.email}</span>
-                    <CopyChipButton value={DEMO.email} label={t('set.copyEmail')} onCopy={demoCopy} />
-                  </span>
-                  <span
-                    dir="ltr"
-                    className="num-ltr flex items-center justify-between gap-2 text-xs text-muted-foreground"
-                  >
-                    <span>{DEMO.password}</span>
-                    <CopyChipButton value={DEMO.password} label={t('set.copyPassword')} onCopy={demoCopy} />
-                  </span>
-                  <span className="mt-1 inline-block text-xs text-primary underline underline-offset-2">
-                    {t('auth.demoFill')}
-                  </span>
-                </div>
 
                 <button
                   onClick={() => setMode('register')}
@@ -467,27 +395,3 @@ export default function AuthView() {
   )
 }
 
-/** Tiny copy affordance used inside the demo credentials tile. */
-function CopyChipButton({
-  value,
-  label,
-  onCopy,
-}: {
-  value: string
-  label: string
-  onCopy: (e: React.MouseEvent<HTMLButtonElement>, value: string) => void
-}) {
-  return (
-    <button
-      type="button"
-      onMouseDown={(e) => e.stopPropagation()}
-      onTouchStart={(e) => e.stopPropagation()}
-      onClick={(e) => onCopy(e, value)}
-      aria-label={label}
-      title={label}
-      className="inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-    >
-      <Copy className="size-3" aria-hidden />
-    </button>
-  )
-}

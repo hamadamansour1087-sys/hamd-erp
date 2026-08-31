@@ -227,6 +227,15 @@ export function rateLimit(key: string, limit: number, windowMs: number): boolean
   return true
 }
 
+/** TEST-ONLY: wipe every in-memory bucket. bun runs all test files in one
+ *  process, so this module-scope damper state would otherwise leak across
+ *  suites whose keys are identical ('register:<ip>' at 5/h) and starve the
+ *  later suites with 429s — a test-isolation defect, not app behavior.
+ *  Production is unaffected: each server process starts with empty buckets. */
+export function __resetInMemoryRateLimitersForTests(): void {
+  buckets.clear()
+}
+
 /** Loose shape check for a v4/v6 IP — rejects junk header values so garbage
  *  keys cannot flood the limiter's bucket map. Not a full INET parser. */
 const IP_SHAPE_RE = /^(\d{1,3}\.){3}\d{1,3}$|^[0-9a-fA-F:]{2,45}$/

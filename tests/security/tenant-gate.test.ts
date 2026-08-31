@@ -42,8 +42,15 @@ const platformOrgActionsRoute = await import('@/app/api/platform/orgs/[id]/route
 const productsRoute = await import('@/app/api/products/route')
 const invoicesRoute = await import('@/app/api/invoices/route')
 const tenant = await import('@/lib/tenant')
+const apiHelpers = await import('@/lib/api-helpers')
 
 const { NextRequest } = await import('next/server')
+
+// TEST ISOLATION: bun runs every suite in ONE process, and the register
+// route's in-memory damper (5/h per key) is module-scope in api-helpers.
+// Suites alphabetically before this one consume that shared budget, so this
+// suite's registrations would 429. Wipe the buckets before we start.
+apiHelpers.__resetInMemoryRateLimitersForTests()
 
 type Sess = { id: string; orgId: string; role: string; tokenVersion?: number }
 
