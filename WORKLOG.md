@@ -155,3 +155,21 @@
 **القرار:** 🟢 GO دون تغيير — وثائق النشر أصبحت متسقة تمامًا مع المعمارية (PostgreSQL + migrate deploy).
 
 **الملفات المتغيرة (الراند 4):** `DEPLOY.md`، `docs/DEPLOY-VERCEL.md`، `package.json` (سكربت build فقط)، `public/sw-manifest.json` (إعادة توليد)، `PRODUCTION-READINESS.md` (§7)، `WORKLOG.md` (هذا القسم).
+
+### Round-4 إضافة — إثبات تحقق حي بتطلب المالك (2026-09-01)
+
+المالك طلب تنفيذًا حيًا للأوامر الأربعة على النسخة النهائية بدل قراءة أرقام التقارير + نسخة احتياطية حقيقية بإثبات استعادة (بعد فقدان أرشيف SQLite الموثق).
+
+**نُفّذ حيًا على `923d213`:** `bun install` EXIT 0 (1147 pkg) → `lint` EXIT 0 → `typecheck` EXIT 0 → `build` EXIT 0 (103 أصل webpack) → `bun test tests/security` **191 pass / 0 fail / 670 expect / 29.18s** → فحص حي على الأصل الجديد: health `db:ok` · `/` 200 · أصل webpack 200 · login 200.
+
+**تدريب نسخ احتياطي حقيقي:** `pg-backup.sh` → 24MB + sha256 → `pg-restore-verify.sh` → عنقود مؤقت :5433 → **0 discrepancies → RESTORE DRILL PASSED** (شفافية: قاعدة المعاينة 0 صفوف أعمال — الإثبات لخط الآلة؛ التخزين الخارجي شرط عند النشر الفعلي).
+
+**تحديث قرار Vercel (قرار تجاري):** `docs/DEPLOY-VERCEL.md` — عميل مدفوع ⇒ **Pro من أول يوم** (§0 + §3-2 + بند في قائمة تحقق §6)؛ Hobby للتجربة الذاتية فقط.
+
+**خطوات النشر المتبقية — بيد المالك حصرًا (بالتجهيز الحرفي):**
+1. Vercel **Pro** (لو العميل بيدفع) من [vercel.com](https://vercel.com) — متطلب شروط استخدام، مش اختياري.
+2. من جهاز المالك: `git remote add origin https://github.com/<account>/hamd.git && git push -u origin main` (المستودع Private، بلا README/.gitignore).
+3. Neon: Project جديد → Region Frankfurt → انسخ رابط **Pooled** + `?pgbouncer=true&connection_limit=1&sslmode=require`.
+4. الترحيل (من جهاز المالك): `DATABASE_URL="<neon-pooled-url>" bunx prisma migrate deploy` — ثم نقل بيانات الأرشيف القديم إن وُجدت نسخة خارجية (docs/DATABASE-MIGRATION.md).
+5. Vercel: Import المشروع → متغيرات البيئة `DATABASE_URL` + `AUTH_SECRET` (openssl rand -base64 48) → Deploy.
+6. اختبار ذاتي كامل قبل تسليم الرابط: دخول → فاتورة → سند → تقرير → POS أوفلاين (قائمة §6 في docs/DEPLOY-VERCEL.md).
