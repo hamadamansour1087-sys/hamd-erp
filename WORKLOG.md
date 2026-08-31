@@ -1,4 +1,57 @@
-# 🧾 WORKLOG.md — سجل عمل التدقيق الشامل (Round 2)
+# 🧾 WORKLOG.md — سجل عمل التدقيق الشامل (Round 3 — الإغلاق النهائي)
+
+**الجلسة:** 2026-08-31 | **الأمر:** «نفّذ كل شيء — أريد البرنامج بدون أخطاء أو أي ثغرات»
+**القاعدة الذهبية:** لا ادعاء نجاح اختبار إلا بتشغيله فعليًا؛ لا إصلاح بدون توثيق سببه.
+
+---
+
+## PHASE 0 — Baseline (بلا تعديل)
+- استعادة كاملة بعد **إعادة تعيين الساندبوكس الثالثة** (`restore-preview.sh`): PG 16.14 + بناء + daemon :3000 → RESTORE OK (HTTP 200)
+- Git: `main` نظيف @ `640b675` | لا remote | 51 commit | تقارير الجولة 2 مقروءة (CONDITIONAL GO بشرطين)
+
+## PHASE 2+25 — الأسرار وتاريخ Git (تنفيذ الشرط أ)
+- مسح كامل للتاريخ: الملفات الحساسة المتتبعة تاريخيًا = `db/custom.db` + أسرار قديمة في 3 commits — **ومفاجأة: `PRODUCTION-READINESS.md` الحالي نفسه كان يسرد القيم حرفيًا** (داخل مثال أمر التنظيف + أمر pickaxe)
+- قنّعت القيم في الملفات الحالية إلى placeholders (R3-2)
+- **تنظيف التاريخ بـ `git filter-repo` — 4 مرارات** (مرار لكل شكل: مقتبس من سكربت المعاينة، عارٍ من نسخ التقارير، وبادئة كلمة المرور)، ملف الاستبدال بُني صامتًا من التاريخ نفسه ولم يُطبع أبدًا
+- **التحقق النهائي (صفر في الكل):** `git log --all -- db/custom.db` = 0 | pickaxe للسرّ = 0 | لكلمة المرور وبادئتها = 0 | لا يوجد أي hex-64 في أي blob في أي commit
+- أول push إلى أي remote أصبح آمنًا — كل الـ hashes تغيرت (موثق: التاريخ أعيد كتابته بالكامل)
+
+## PHASE 4 — الترحيلات
+- baseline للترحيلين السابقين على العنقود المستعاد (`migrate resolve --applied`) + تطبيق `20260901000000_rate_limit_events` بـ `migrate deploy`
+- `bunx prisma migrate status` → **Database schema is up to date!** (3 migrations)
+
+## PHASE 15 — إغلاق خطر 4-1 (محدد التسجيل → DB عالمي)
+- `RateLimitEvent` (نمط LoginAttempt: صف لكل ضربة مقبولة + تنظيف موجّه + GC 24h + مفتاح مقتطع 200) + `dbRateLimit()` في api-helpers
+- register/route: طبقتان — مُخمّد in-memory رخيص ثم **ميزانية عالمية DB-backed** (5/ساعة/IP)
+- 6 اختبارات انحدار جديدة (`tests/security/rate-limit-db.test.ts`) أبرزها **محاكاة مثيل بارد**: 5 صفوف في DB وحدها ترد الضربة السادسة في عملية جديدة
+- ملاحظة هندسية موثقة في الاختبار: خريطة in-memory مشتركة بين ملفات bun المتوازية (عملية واحدة) — صُممت التوكيدات لتكون حتمية في كل الترتيبات
+
+## PHASE 26+27 — المصفوفة الكاملة والفحص الحي (نتائج فعلية)
+| الاختبار | النتيجة |
+|---|---|
+| `bun test tests/security` | **191 pass / 0 fail** (185 + 6، 670 expect، 9 ملفات) |
+| `bun run typecheck` / `bun run lint` | 0 / 0 |
+| `bunx next build --webpack` + manifest + postbuild | BUILD OK (103 أصل SW) |
+| daemon :3000 | health `{"status":"ok","db":"ok"}` |
+| بوابات المصادقة | bootstrap/export/platform/reports = 401 ✓ دخول خاطئ 401 ✓ |
+| الرؤوس | CSP بنوسة + X-Frame DENY + nosniff + Referrer-Policy + Permissions-Policy ✓ |
+| **إثبات حي للميزة الجديدة** | 6 تسجيلات متتالية على :3000 → **5×201 ثم 429** |
+| النسخ الاحتياطي | `pg-backup.sh` نسخة باردة 24MB + sha256 + فك وفحص ملفي (PG_VERSION=16) + الصحة ok بعدها |
+
+## 🔴 حادثة موثقة: فقدان `db/custom.db`
+- الملف (أرشيف SQLite: 165 فاتورة…) غير موجود على القرص — فُقد بإعادة تعيين الساندبوكس الثالثة **قبل بدء الجولة** (غير متتبع منذ `b806bb8` → الساندبوكس يمسح كل غير متتبع؛ الدليل: `.preview-secrets.env` أُعيد توليده من الصفر)
+- ليس بفعل تنظيف التاريخ (التنظيف أزال نسخة Git فقط — وهذا هو المطلوب أمنيًا)
+- الاسترداد مستنفد: `git fsck --unreachable` فارغ، لا نسخ في القرص/tmp
+- الأثر محدود: بياناته سبق ترحيلها إلى PostgreSQL بصفر اختلافات؛ سجل النظام الفعلي PostgreSQL؛ درس مُطبق: النسخ الدائم خارج البيئة فقط (DEPLOYMENT.md)
+
+## PHASE 29+30 — المسح الثابت النهائي والتحقق
+- الأسرار في HEAD: لا شيء (فحص git grep للقيم والبادئات) | migrate status: up to date | لا ignoreBuildErrors | CSP بنوسة | كل بوابات 401 | 191/191
+- **الملفات المتغيرة:** prisma/schema.prisma، prisma/migrations/20260901000000_rate_limit_events (جديد)، src/lib/api-helpers.ts، src/app/api/auth/register/route.ts، tests/security/rate-limit-db.test.ts (جديد)، PRODUCTION-READINESS.md (🟢 GO)، SECURITY-AUDIT.md (جولة 3)، DEPLOYMENT.md، public/sw-manifest.json
+- **قرار الجولة 3: 🟢 GO** — الشرطان منفّذان ومتحقق منهما؛ لا P0/P1 مفتوح
+
+---
+
+# 📜 Round 2 (سجل تاريخي) — 2026-08-31
 
 **الجلسة:** 2026-08-31 | **المنهجية:** AUDIT → FIND → FIX → TEST → VERIFY → DOCUMENT
 **القاعدة الذهبية:** لا ادعاء نجاح اختبار إلا بتشغيله فعليًا؛ لا إصلاح بدون توثيق سببه.

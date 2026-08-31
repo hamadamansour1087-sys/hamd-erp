@@ -20,9 +20,10 @@
 
 # 2. الترحيل (من جهازك، مرة واحدة):
 DATABASE_URL="<neon-url>" bunx prisma migrate deploy
-#    (لإحضار بيانات SQLite القديمة db/custom.db لمرة واحدة:
+#    (ترحيل بيانات SQLite القديمة — إن كانت لديك نسخة خارجية من db/custom.db:
 #     LEGACY_DATABASE_URL="file:db/custom.db" DATABASE_URL="<neon-url>" \
-#     bun scripts/migrate-sqlite-to-postgres.ts   — يتحقق ذاتيًا ويخرج بخطأ عند أي اختلاف)
+#     bun scripts/migrate-sqlite-to-postgres.ts   — يتحقق ذاتيًا ويخرج بخطأ عند أي اختلاف
+#     ملاحظة جولة 3: الأرشيف الأصلي فُقد بإعادة تعيين بيئة المعاينة — حادثة موثقة)
 
 # 3. Vercel: اربط المستودع واضبط متغيرات البيئة:
 #    DATABASE_URL / AUTH_SECRET (openssl rand -base64 32) / TRUST_PROXY=true
@@ -46,7 +47,7 @@ NODE_ENV=production AUTH_SECRET=... DATABASE_URL=... node .next/standalone/serve
 
 1. `prisma migrate deploy` **فقط** — `db push` ممنوع في الإنتاج (حرف `db:push` موجود للتطوير المحلي حصرًا).
 2. لا تضع أي سر في Git — القيم تُدار بمتغيرات البيئة للمنصة. `scripts/.preview-secrets.env` خاص بالمعاينة المحلية ومتجاهل.
-3. `db/custom.db` أرشيف محلي لبيانات الترحيل — **لا يُنشر ولا يُدفع إلى أي remote** (مستبعد من Git بالفعل؛ نظّف التاريخ قبل أول push — انظر PRODUCTION-READINESS.md §3).
+3. ~~`db/custom.db` أرشيف محلي… نظّف التاريخ قبل أول push~~ **مُغلق في جولة 3**: تنظيف تاريخ Git **تم وتحقق** (صفر أثر للـ DB والأسرار في كل التاريخ — انظر PRODUCTION-READINESS.md §3). ملاحظة: الملف نفسه فُقد بإعادة تعيين بيئة المعاينة (حادثة موثقة) — إن توفرت نسخة خارجية منه واستُرجست محليًا فقاعدة الاستبعاد من Git سارية.
 4. بعد أي تغيير على `prisma/schema.prisma`: `bunx prisma migrate dev --name <change>` محليًا ثم `migrate deploy` في الإنتاج.
 
 ## 5) ما بعد النشر — قائمة تحقق
