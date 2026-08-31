@@ -2,7 +2,7 @@ import { hashPasswordAsync, MAX_PASSWORD_LEN } from '@/lib/auth'
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 
-import { str, boundedStr, rateLimit, clientIp, tooMany, readJson, isUniqueViolation } from '@/lib/api-helpers'
+import { str, boundedStr, rateLimit, dbRateLimit, clientIp, tooMany, readJson, isUniqueViolation } from '@/lib/api-helpers'
 import { TRIAL_DAYS } from '@/lib/tenant'
 
 /** Phone normalization for the registration contact field: digits, spaces,
@@ -24,8 +24,13 @@ function normalizePhone(raw: string): string {
  */
 export async function POST(req: NextRequest) {
   try {
-    // Anti-abuse: 5 registrations per hour per IP.
-    if (!rateLimit(`register:${clientIp(req)}`, 5, 60 * 60_000)) return tooMany()
+    // Anti-abuse: 5 registrations per hour per IP — two layers:
+    //  1. in-memory sliding window: cheap pre-DB DoS damper (per process)
+    //  2. DB-backed ledger via dbRateLimit: the REAL global budget — survives
+    //     restarts and is enforced across multiple app instances.
+    const regIp = clientIp(req)
+    if (!rateLimit(`register:${regIp}`, 5, 60 * 60_000)) return tooMany()
+    if (!(await dbRateLimit(`register:${regIp}`, 5, 60 * 60_000))) return tooMany()
 
     // Body-size cap: pre-auth endpoint — never buffer a hostile multi-MB body.
     const body = await readJson(req, 64_000)

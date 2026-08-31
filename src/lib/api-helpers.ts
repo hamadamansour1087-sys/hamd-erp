@@ -326,6 +326,40 @@ export async function recordFailedLogin(rawEmail: string, rawIp: string): Promis
   return { acct: acctFails <= LOGIN_ACCT_MAX, ip: ipFails <= LOGIN_IP_MAX }
 }
 
+// ─────────────── DB-backed rate-limit ledger (multi-instance safe) ───────────────
+// Sliding-window budget recorded in the database: one row per admitted hit
+// under `key`. Unlike the in-memory rateLimit() damper (per-process, wiped by
+// restarts), this budget is GLOBAL — it survives restarts and is enforced
+// across multiple app instances; each instance's in-memory damper only trims
+// its own traffic, the DB decides the real budget. Intended for pre-auth
+// endpoints where the caller has no session/org yet (registration today).
+// Fail-open ONLY if the ledger itself is unreachable — the request then
+// continues and fails naturally on its next DB touch.
+const RATE_LEDGER_MAX_AGE_MS = 24 * 86_400_000
+let rateLedgerGcCounter = 0
+
+export async function dbRateLimit(rawKey: string, max: number, windowMs: number): Promise<boolean> {
+  // Bounded key value: a hostile pre-auth request must not be able to write
+  // multi-KB strings into a ledger row.
+  const key = rawKey.slice(0, 200)
+  await db.rateLimitEvent.create({ data: { bucketKey: key } }).catch(() => undefined)
+  const since = new Date(Date.now() - windowMs)
+  // Targeted purge: expired rows for THIS key can never affect a decision
+  // again — deleting them on every call keeps each key's footprint bounded.
+  void db.rateLimitEvent
+    .deleteMany({ where: { bucketKey: key, createdAt: { lt: since } } })
+    .catch(() => undefined)
+  if (++rateLedgerGcCounter % 10 === 0) {
+    void db.rateLimitEvent
+      .deleteMany({ where: { createdAt: { lt: new Date(Date.now() - RATE_LEDGER_MAX_AGE_MS) } } })
+      .catch(() => undefined)
+  }
+  const hits = await db.rateLimitEvent
+    .count({ where: { bucketKey: key, createdAt: { gte: since } } })
+    .catch(() => 0)
+  return hits <= max
+}
+
 // ─────────────────────────── idempotency guard ───────────────────────────
 // Offline POS replays can duplicate mutations (request committed, response lost).
 // The client sends a stable `Idempotency-Key` header per logical operation; the

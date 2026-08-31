@@ -27,11 +27,11 @@
    ```bash
    pip install git-filter-repo
    git filter-repo --invert-paths --path db/custom.db
-   printf 'REDACTED==>REDACTED\nREDACTED-Gl06==>REDACTED\n' > /tmp/replacements.txt
+   printf '<old-AUTH_SECRET-hex-64>==>REDACTED\n<old-admin-password>==>REDACTED\n' > /tmp/replacements.txt
    git filter-repo --replace-text /tmp/replacements.txt
    # تحقق: يجب ألا يرجع شيئًا
    git log --all --oneline -- db/custom.db
-   git log --all -S'REDACTED'
+   git log --all -S'<old-admin-password>'
    ```
    > سرّ المعاينة القديم اعتبره مُسرَّبًا (لم يحمِ إنتاجًا أبدًا). ملفات .env الحقيقية ليست في التاريخ أبدًا (تحقق `git log --all -- .env`).
 2. **أسرار الإنتاج:** `AUTH_SECRET=$(openssl rand -base64 32)` جديد + `DATABASE_URL` من مزود PG مُدار. لا تُعاد استخدام قيم المعاينة.

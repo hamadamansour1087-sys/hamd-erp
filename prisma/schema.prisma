@@ -116,6 +116,19 @@ model LoginAttempt {
   @@index([ip, createdAt])
 }
 
+/// DB-backed sliding-window rate-limit ledger for pre-auth abuse controls
+/// (registration and future pre-auth endpoints). One row per admitted hit
+/// per bucket key — being in the database it is enforced globally: it
+/// survives restarts and holds across multiple app instances, while the
+/// in-memory rateLimit() stays only as a cheap pre-DB DoS damper.
+model RateLimitEvent {
+  id        String   @id @default(cuid())
+  bucketKey String
+  createdAt DateTime @default(now())
+
+  @@index([bucketKey, createdAt])
+}
+
 // Sequence numbers per tenant per doc type (INV / PUR / RCV / PMT / TRF)
 model Counter {
   id     String @id @default(cuid())
