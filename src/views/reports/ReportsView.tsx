@@ -81,6 +81,7 @@ import {
   type ReportPrintTable,
 } from './chart-parts'
 import { downloadReportPdf } from '@/lib/reports/report-pdf'
+import { InvoiceDocReport, CashDocReport, MovementsDocReport } from './doc-reports'
 
 const DAYS = [7, 30, 90, 180] as const
 
@@ -1072,6 +1073,10 @@ export default function ReportsView() {
       <Tabs defaultValue="overview" className="gap-4">
         <TabsList className="w-full justify-start overflow-x-auto scrollbar-thin sm:w-fit">
           <TabsTrigger value="overview" className="whitespace-nowrap">{t('rpt.tabOverview')}</TabsTrigger>
+          <TabsTrigger value="sales" className="whitespace-nowrap">{t('rpt.tabSales')}</TabsTrigger>
+          <TabsTrigger value="purchases" className="whitespace-nowrap">{t('rpt.tabPurchases')}</TabsTrigger>
+          <TabsTrigger value="cash" className="whitespace-nowrap">{t('rpt.tabCash')}</TabsTrigger>
+          <TabsTrigger value="movements" className="whitespace-nowrap">{t('rpt.tabMovements')}</TabsTrigger>
           <TabsTrigger value="products" className="whitespace-nowrap">{t('rpt.tabProducts')}</TabsTrigger>
           <TabsTrigger value="stock" className="whitespace-nowrap">{t('rpt.tabStock')}</TabsTrigger>
           <TabsTrigger value="balances" className="whitespace-nowrap">{t('rpt.tabBalances')}</TabsTrigger>
@@ -1095,6 +1100,22 @@ export default function ReportsView() {
             </div>
           </div>
           {overviewBody}
+        </TabsContent>
+
+        <TabsContent value="sales" className="space-y-4">
+          <InvoiceDocReport kind="SALE" />
+        </TabsContent>
+
+        <TabsContent value="purchases" className="space-y-4">
+          <InvoiceDocReport kind="PURCHASE" />
+        </TabsContent>
+
+        <TabsContent value="cash" className="space-y-4">
+          <CashDocReport />
+        </TabsContent>
+
+        <TabsContent value="movements" className="space-y-4">
+          <MovementsDocReport />
         </TabsContent>
 
         <TabsContent value="products" className="space-y-4">
