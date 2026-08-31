@@ -17,7 +17,9 @@ import * as React from 'react'
 import { motion } from 'framer-motion'
 import {
   ArrowLeft,
+  Bell,
   CheckCircle2,
+  Clock,
   Code2,
   FlaskConical,
   Globe,
@@ -84,6 +86,9 @@ interface Program {
   desc: string
   features: ReadonlyArray<string>
   gradient: string
+  /** 'live' → registration opens the real program; 'soon' → waiting-list only */
+  status: 'live' | 'soon'
+  soonNote?: string
 }
 
 const PROGRAMS: ReadonlyArray<Program> = [
@@ -91,6 +96,8 @@ const PROGRAMS: ReadonlyArray<Program> = [
     icon: Stethoscope,
     name: 'برنامج إدارة عيادات الأسنان',
     tagline: 'عيادتك منظمة… ومريضك مطمئن',
+    status: 'soon',
+    soonNote: 'قيد التطوير — سنسلّمه قريباً بإذن الله',
     desc: 'نظام متكامل يدير عيادة الأسنان من أول حجز موعد حتى تسليم الفاتورة — ملف طبي كامل لكل مريض ومتابعة دقيقة للخطط العلاجية.',
     features: [
       'ملف طبي كامل لكل مريض بتاريخه وأشعته',
@@ -106,6 +113,8 @@ const PROGRAMS: ReadonlyArray<Program> = [
     icon: FlaskConical,
     name: 'برنامج إدارة معامل الأسنان',
     tagline: 'من أمر الشغل… حتى التسليم',
+    status: 'soon',
+    soonNote: 'قيد التطوير — سنسلّمه قريباً بإذن الله',
     desc: 'مصمم خصيصًا لمعامل التركيبات: تتبّع كل حالة شغل مرحلة بمرحلة، ومتابعة الفنيين، وحسابات دقيقة مع العيادات.',
     features: [
       'استقبال أوامر الشغل من العيادات إلكترونيًا',
@@ -121,6 +130,7 @@ const PROGRAMS: ReadonlyArray<Program> = [
     icon: Warehouse,
     name: 'برنامج المخزون ونقاط البيع',
     tagline: 'محلك كله… من شاشتك',
+    status: 'live',
     desc: 'نظام نقاط بيع ومخازن وفواتير يعمل أونلاين وأوفلاين — للبقالات والمحلات والصيدليات وأي نشاط يبيع ويشتري.',
     features: [
       'نقطة بيع فائقة السرعة بالباركود والاختصارات',
@@ -276,19 +286,19 @@ const PLANS: ReadonlyArray<{
 
 const TESTIMONIALS: ReadonlyArray<{ quote: string; name: string; business: string }> = [
   {
-    quote: 'برنامج العيادات وفّر علينا وقت الاستقبال كله — المواعيد والملفات والفواتير في مكان واحد.',
-    name: 'د. أحمد',
-    business: 'عيادة أسنان',
-  },
-  {
-    quote: 'أعرف كل حالة شغل وصلت لمرحلة إيه، والحسابات مع العيادات بقت مظبوطة لآخر قرش.',
-    name: 'محمود',
-    business: 'معمل تركيبات أسنان',
-  },
-  {
     quote: 'الكاشير اتعلمه في يوم، والطباعة الحرارية بتصدر الفاتورة في ثانية — وبيشتغل أوفلاين فعلاً.',
     name: 'سارة',
     business: 'سوبر ماركت',
+  },
+  {
+    quote: 'أول مرة أعرف ربحي الحقيقي بنهاية كل يوم — المبيعات والمصروفات والمخزون قدامي في شاشة واحدة.',
+    name: 'أحمد',
+    business: 'بقالة وميني ماركت',
+  },
+  {
+    quote: 'حدود الائتمان وكشوف الحسابات نظمت تعاملنا مع العملاء — مفيش فواتير ضايعة تاني.',
+    name: 'محمود',
+    business: 'مكتبة وقرطاسية',
   },
 ]
 
@@ -307,7 +317,11 @@ const FAQS: ReadonlyArray<{ q: string; a: string }> = [
   },
   {
     q: 'هل البرنامج مناسب لعيادة أو معمل أسنان فقط أم للمحلات أيضاً؟',
-    a: 'نوفّر ثلاثة برامج متخصصة: برنامج إدارة عيادات الأسنان، وبرنامج إدارة معامل الأسنان، وبرنامج المخزون ونقاط البيع للمحلات — وكلها تشترك في نفس الجودة والفواتير والتقارير والدعم.',
+    a: 'نوفّر ثلاثة برامج متخصصة: برنامج المخزون ونقاط البيع متاح الآن ويعمل فعلياً مع عملاءنا، بينما برنامجا إدارة عيادات الأسنان ومعامل الأسنان قيد التطوير وسنطلقهما قريباً — سجّل اهتمامك وسنبلغك فور توفرهما.',
+  },
+  {
+    q: 'متى تصدر برامج العيادات والمعامل؟',
+    a: 'البرنامجان قيد التطوير الآن ونطرحهما قريباً. يمكنك تسجيل طلبك مسبقاً وسيصلك إشعار عند الإطلاق مع عرض خاص للمتبكرين.',
   },
   {
     q: 'هل يمكن استيراد بياناتي الحالية؟',
@@ -489,7 +503,16 @@ function FloatingCard({
   )
 }
 
+/** Short display name for hero tabs / footer chips. */
+function programShort(name: string): string {
+  return name.replace('برنامج ', '').replace('إدارة ', '')
+}
+
 function Hero({ onAuth }: { onAuth: () => void }) {
+  const liveIdx = PROGRAMS.findIndex((p) => p.status === 'live')
+  const [tab, setTab] = React.useState(liveIdx === -1 ? 0 : liveIdx)
+  const active = PROGRAMS[tab]
+
   return (
     <section className="relative overflow-x-clip pb-16 pt-14 md:pb-24 md:pt-20" aria-label="المقدمة">
       <div className="mx-auto max-w-3xl px-4 text-center">
@@ -532,7 +555,7 @@ function Hero({ onAuth }: { onAuth: () => void }) {
           className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row"
         >
           <Button onClick={onAuth} size="lg" className="h-12 px-8 text-base font-bold shadow-md">
-            اطلب تفعيل حسابك مجاناً
+            ابدأ الآن — تجربة مجانية
           </Button>
           <Button asChild variant="outline" size="lg" className="h-12 px-8 text-base">
             <a href="#programs">تعرّف على برامجنا</a>
@@ -545,59 +568,154 @@ function Hero({ onAuth }: { onAuth: () => void }) {
           transition={{ duration: 0.5, delay: 0.34 }}
           className="mt-4 text-sm text-muted-foreground"
         >
-          مراجعة سريعة للطلبات · ١٤ يوم تجربة مجانية · بياناتك ملكك
+          برنامج المخزون ونقاط البيع متاح الآن · برامج العيادات والمعامل قريباً · بياناتك ملكك
         </motion.p>
       </div>
 
-      {/* browser mockup */}
+      {/* product showcase — tabbed between the three programs */}
       <motion.div
         initial={{ opacity: 0, y: 24 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.6, delay: 0.35, ease: 'easeOut' }}
-        className="relative mx-auto mt-12 max-w-5xl px-4 md:mt-16"
+        className="relative mx-auto mt-10 max-w-5xl px-4 md:mt-14"
       >
-        <FloatingCard className="-start-2 top-16 xl:-start-10" delay={0.7}>
-          <CheckCircle2 className="size-5 shrink-0 text-primary" aria-hidden />
-          <div>
-            <p className="text-sm font-bold" dir="ltr">
-              INV-0021
-            </p>
-            <p className="text-xs text-muted-foreground">فاتورة · مدفوعة ✓</p>
-          </div>
-        </FloatingCard>
-
-        <FloatingCard className="-end-2 bottom-20 xl:-end-10" delay={0.9}>
-          <TrendingUp className="size-5 shrink-0 text-primary" aria-hidden />
-          <div>
-            <p className="text-sm font-bold">مبيعات اليوم · ١٢٬٤٠٠ ج.م</p>
-            <p className="text-xs font-medium text-primary">↑ 18% مقارنة بالأمس</p>
-          </div>
-        </FloatingCard>
-
-        <div className="overflow-hidden rounded-xl border bg-card shadow-2xl">
-          {/* fake browser chrome */}
-          <div className="flex items-center gap-2 border-b bg-muted/70 px-4 py-2.5" aria-hidden>
-            <div className="flex gap-1.5">
-              <span className="size-3 rounded-full bg-red-400" />
-              <span className="size-3 rounded-full bg-amber-400" />
-              <span className="size-3 rounded-full bg-emerald-500" />
-            </div>
-            <div
-              dir="ltr"
-              className="mx-auto flex items-center rounded-md border bg-background px-4 py-1 text-xs text-muted-foreground"
+        <div
+          role="tablist"
+          aria-label="تبويب برامجنا"
+          className="mx-auto mb-6 flex w-fit max-w-full flex-wrap items-center justify-center gap-1.5 rounded-2xl border bg-muted/50 p-1.5 shadow-sm"
+        >
+          {PROGRAMS.map((p, i) => (
+            <button
+              key={p.name}
+              role="tab"
+              aria-selected={tab === i}
+              onClick={() => setTab(i)}
+              className={`flex min-h-10 items-center gap-2 rounded-xl px-3.5 py-1.5 text-sm font-bold transition-colors sm:px-4 ${
+                tab === i
+                  ? 'bg-background text-foreground shadow-md ring-1 ring-border'
+                  : 'text-muted-foreground hover:text-foreground'
+              }`}
             >
-              hamd.app
-            </div>
-            <div className="w-[52px]" />
-          </div>
-          <img
-            src="/landing/app-dashboard.png"
-            alt="لقطة شاشة من نظام H.A.M.D تعرض المبيعات والمخزون والتقارير"
-            className="block h-auto w-full bg-muted"
-            width={1280}
-            height={720}
-          />
+              <p.icon className="size-4 shrink-0" aria-hidden />
+              <span className="whitespace-nowrap">{programShort(p.name)}</span>
+              {p.status === 'live' ? (
+                <span className="flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-extrabold text-primary">
+                  <span aria-hidden className="size-1.5 rounded-full bg-primary" />
+                  متاح
+                </span>
+              ) : (
+                <span className="flex items-center gap-1 rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-extrabold text-amber-600 dark:text-amber-400">
+                  <Clock className="size-2.5" aria-hidden />
+                  قريباً
+                </span>
+              )}
+            </button>
+          ))}
         </div>
+
+        {active.status === 'live' ? (
+          <motion.div
+            key={`live-${tab}`}
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.4, ease: 'easeOut' }}
+            className="relative"
+          >
+            <FloatingCard className="-start-2 top-16 xl:-start-10" delay={0.7}>
+              <CheckCircle2 className="size-5 shrink-0 text-primary" aria-hidden />
+              <div>
+                <p className="text-sm font-bold" dir="ltr">
+                  INV-0021
+                </p>
+                <p className="text-xs text-muted-foreground">فاتورة · مدفوعة ✓</p>
+              </div>
+            </FloatingCard>
+
+            <FloatingCard className="-end-2 bottom-20 xl:-end-10" delay={0.9}>
+              <TrendingUp className="size-5 shrink-0 text-primary" aria-hidden />
+              <div>
+                <p className="text-sm font-bold">مبيعات اليوم · ١٢٬٤٠٠ ج.م</p>
+                <p className="text-xs font-medium text-primary">↑ 18% مقارنة بالأمس</p>
+              </div>
+            </FloatingCard>
+
+            <div className="overflow-hidden rounded-xl border bg-card shadow-2xl">
+              {/* browser chrome */}
+              <div className="flex items-center gap-2 border-b bg-muted/70 px-4 py-2.5" aria-hidden>
+                <div className="flex gap-1.5">
+                  <span className="size-3 rounded-full bg-red-400" />
+                  <span className="size-3 rounded-full bg-amber-400" />
+                  <span className="size-3 rounded-full bg-emerald-500" />
+                </div>
+                <div
+                  dir="ltr"
+                  className="mx-auto flex items-center rounded-md border bg-background px-4 py-1 text-xs text-muted-foreground"
+                >
+                  hamd.app
+                </div>
+                <div className="w-[52px]" />
+              </div>
+              <img
+                src="/landing/app-dashboard.png"
+                alt="لقطة شاشة من برنامج H.A.M.D للمخزون ونقاط البيع تعرض المبيعات والمخزون والتقارير"
+                className="block h-auto w-full bg-muted"
+                width={1280}
+                height={720}
+              />
+            </div>
+          </motion.div>
+        ) : (
+          <motion.div
+            key={`soon-${tab}`}
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.4, ease: 'easeOut' }}
+            className="overflow-hidden rounded-xl border bg-card shadow-2xl"
+          >
+            <div className="flex items-center gap-2 border-b bg-muted/70 px-4 py-2.5" aria-hidden>
+              <div className="flex gap-1.5">
+                <span className="size-3 rounded-full bg-red-400" />
+                <span className="size-3 rounded-full bg-amber-400" />
+                <span className="size-3 rounded-full bg-emerald-500" />
+              </div>
+              <div
+                dir="ltr"
+                className="mx-auto flex items-center rounded-md border bg-background px-4 py-1 text-xs text-muted-foreground"
+              >
+                hamd.app
+              </div>
+              <div className="w-[52px]" />
+            </div>
+            <div className="relative flex min-h-[320px] flex-col items-center justify-center gap-4 overflow-hidden bg-gradient-to-br from-muted/70 via-background to-muted/50 p-8 text-center md:min-h-[430px] md:p-12">
+              <div
+                aria-hidden
+                className="absolute -end-20 -top-20 size-64 rounded-full bg-primary/5 blur-2xl"
+              />
+              <div aria-hidden className="absolute -bottom-24 -start-16 size-72 rounded-full bg-primary/5 blur-2xl" />
+              <span
+                className={`relative flex size-16 items-center justify-center rounded-2xl bg-gradient-to-br ${active.gradient} text-white shadow-lg`}
+              >
+                <active.icon className="size-8" aria-hidden />
+              </span>
+              <span className="relative inline-flex items-center gap-1.5 rounded-full bg-amber-500/15 px-3.5 py-1.5 text-sm font-extrabold text-amber-600 dark:text-amber-400">
+                <Clock className="size-4" aria-hidden />
+                قريباً
+              </span>
+              <h3 className="relative text-xl font-extrabold md:text-2xl">{active.name}</h3>
+              <p className="relative max-w-md text-sm leading-relaxed text-muted-foreground">
+                {active.desc}
+              </p>
+              <p className="relative text-xs font-bold text-muted-foreground">{active.soonNote}</p>
+              <a
+                href={`mailto:support@hamd.app?subject=${encodeURIComponent(`إشعار إطلاق ${active.name}`)}`}
+                className="relative mt-1 inline-flex min-h-10 items-center gap-2 rounded-full border bg-background px-5 text-sm font-bold text-foreground shadow-sm transition-colors hover:bg-accent"
+              >
+                <Bell className="size-4 text-primary" aria-hidden />
+                أبلغني عند الإطلاق
+              </a>
+            </div>
+          </motion.div>
+        )}
       </motion.div>
     </section>
   )
@@ -660,10 +778,30 @@ function About() {
 /* -------------------------------- programs -------------------------------- */
 
 function ProgramCard({ program, onAuth, delay }: { program: Program; onAuth: () => void; delay: number }) {
+  const live = program.status === 'live'
   return (
     <Reveal delay={delay} className="h-full">
-      <div className="flex h-full flex-col overflow-hidden rounded-2xl border bg-card shadow-sm transition-shadow hover:shadow-md">
-        <div className={`flex items-center gap-4 bg-gradient-to-br ${program.gradient} p-6 text-white`}>
+      <div
+        className={`relative flex h-full flex-col overflow-hidden rounded-2xl border bg-card shadow-sm transition-shadow hover:shadow-md ${
+          live ? 'ring-2 ring-primary/70' : ''
+        }`}
+      >
+        {/* status badge */}
+        {live ? (
+          <span className="absolute end-4 top-4 z-10 inline-flex items-center gap-1.5 rounded-full bg-white/95 px-3 py-1 text-xs font-extrabold text-emerald-700 shadow-md">
+            <span aria-hidden className="relative flex size-2">
+              <span className="absolute inline-flex size-full animate-ping rounded-full bg-emerald-500 opacity-75" />
+              <span className="relative inline-flex size-2 rounded-full bg-emerald-600" />
+            </span>
+            متاح الآن
+          </span>
+        ) : (
+          <span className="absolute end-4 top-4 z-10 inline-flex items-center gap-1.5 rounded-full bg-white/95 px-3 py-1 text-xs font-extrabold text-amber-600 shadow-md">
+            <Clock className="size-3.5" aria-hidden />
+            قريباً
+          </span>
+        )}
+        <div className={`flex items-center gap-4 bg-gradient-to-br ${program.gradient} p-6 text-white ${live ? '' : 'opacity-90'}`}>
           <span className="flex size-14 shrink-0 items-center justify-center rounded-2xl bg-white/15 backdrop-blur">
             <program.icon className="size-7" aria-hidden />
           </span>
@@ -674,19 +812,38 @@ function ProgramCard({ program, onAuth, delay }: { program: Program; onAuth: () 
         </div>
         <div className="flex flex-1 flex-col p-6">
           <p className="text-sm leading-relaxed text-muted-foreground">{program.desc}</p>
-          <ul className="mt-5 flex flex-col gap-2.5">
+          <p className="mt-3 text-xs font-bold text-amber-600 dark:text-amber-400">
+            {live ? 'هذا هو البرنامج الذي تستخدمه عملاؤنا اليوم — جرّبه بنفسك.' : program.soonNote}
+          </p>
+          <ul className="mt-4 flex flex-col gap-2.5">
             {program.features.map((f) => (
-              <li key={f} className="flex items-start gap-2 text-sm">
-                <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden />
+              <li key={f} className={`flex items-start gap-2 text-sm ${live ? '' : 'text-muted-foreground/70'}`}>
+                {live ? (
+                  <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden />
+                ) : (
+                  <Clock className="mt-0.5 size-4 shrink-0 text-muted-foreground/50" aria-hidden />
+                )}
                 {f}
               </li>
             ))}
           </ul>
           <div className="mt-auto pt-6">
-            <Button onClick={onAuth} variant="outline" className="h-11 w-full gap-1.5 font-bold">
-              اطلب هذا البرنامج
-              <ArrowLeft className="size-4" aria-hidden />
-            </Button>
+            {live ? (
+              <Button onClick={onAuth} className="h-11 w-full gap-1.5 font-bold shadow-sm">
+                ابدأ الآن — تجربة مجانية
+                <ArrowLeft className="size-4" aria-hidden />
+              </Button>
+            ) : (
+              <Button
+                disabled
+                variant="outline"
+                aria-label={`${program.name} — غير متاح بعد`}
+                className="h-11 w-full cursor-not-allowed gap-1.5 font-bold text-muted-foreground"
+              >
+                <Clock className="size-4" aria-hidden />
+                غير متاح — قريباً
+              </Button>
+            )}
           </div>
         </div>
       </div>
@@ -700,7 +857,7 @@ function Programs({ onAuth }: { onAuth: () => void }) {
       <div className="mx-auto max-w-6xl px-4">
         <SectionHeading
           title="برامجنا الثلاثة"
-          sub="ثلاثة أنظمة متخصصة بنيتها H.A.M.D — اختر ما يناسب نشاطك، أو تواصل معنا لبرنامج مخصص لك."
+          sub="برنامج المخزون ونقاط البيع متاح الآن ويعمل مع عملائنا — وبرنامجا العيادات والمعامل قيد التطوير وسنطلقهما قريباً."
         />
         <div className="grid gap-6 lg:grid-cols-3">
           {PROGRAMS.map((p, i) => (
@@ -756,7 +913,7 @@ function HowItWorks() {
       <div className="mx-auto max-w-6xl px-4">
         <SectionHeading
           title="ابدأ في ثلاث خطوات"
-          sub="لا تحتاج خبرة تقنية — تسجيل الطلب في دقيقة، والتفعيل من فريقنا."
+          sub="لبرنامج المخزون ونقاط البيع — لا تحتاج خبرة تقنية، تسجيل الطلب في دقيقة والتفعيل من فريقنا."
         />
         <div className="relative grid gap-10 md:grid-cols-3 md:gap-6">
           {/* dashed connector (desktop) */}
@@ -797,8 +954,8 @@ function Videos() {
     >
       <div className="mx-auto max-w-6xl px-4">
         <SectionHeading
-          title="تعلّم H.A.M.D في دقائق"
-          sub="فيديوهات تعليمية قصيرة — شرح عربي واضح لمميزات النظام."
+          title="جولة داخل برنامج المخزون ونقاط البيع"
+          sub="فيديوهات قصيرة من البرنامج المتاح الآن — شرح عربي واضح لنقطة البيع والمخزون والتقارير."
         />
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:gap-6 lg:grid-cols-4">
           {VIDEOS.map((video, i) => (
@@ -869,7 +1026,7 @@ function Pricing({ onAuth }: { onAuth: () => void }) {
       <div className="mx-auto max-w-6xl px-4">
         <SectionHeading
           title="أسعار واضحة — ابدأ مجاناً"
-          sub="بعد الموافقة على طلبك تحصل على ١٤ يوم تجربة كاملة بدون بطاقة ائتمان، ثم تختار الباقة التي تناسبك."
+          sub="أسعار برنامج المخزون ونقاط البيع (المتاح الآن) — بعد الموافقة على طلبك تحصل على ١٤ يوم تجربة كاملة بدون بطاقة ائتمان."
         />
         <div className="mx-auto grid max-w-5xl items-stretch gap-6 lg:grid-cols-3">
           {PLANS.map((plan, i) => (
@@ -927,7 +1084,7 @@ function Testimonials() {
       <div className="mx-auto max-w-6xl px-4">
         <SectionHeading
           title="عملاؤنا يتحدثون"
-          sub="عيادات ومعامل ومحلات تدير أعمالها يوميًا عبر برامج H.A.M.D."
+          sub="محلات وبقالات وصيدليات تدير مبيعاتها ومخزونها يوميًا عبر برنامج المخزون ونقاط البيع."
         />
         <div className="grid grid-cols-1 gap-4 md:grid-cols-3 md:gap-6">
           {TESTIMONIALS.map((item, i) => (
@@ -1065,9 +1222,9 @@ const FOOTER_COLS: ReadonlyArray<{
   {
     title: 'برامجنا',
     links: [
-      { label: 'إدارة عيادات الأسنان', href: '#programs' },
-      { label: 'إدارة معامل الأسنان', href: '#programs' },
-      { label: 'المخزون ونقاط البيع', href: '#programs' },
+      { label: 'المخزون ونقاط البيع — متاح', href: '#programs' },
+      { label: 'إدارة عيادات الأسنان — قريباً', href: '#programs' },
+      { label: 'إدارة معامل الأسنان — قريباً', href: '#programs' },
     ],
   },
   {
