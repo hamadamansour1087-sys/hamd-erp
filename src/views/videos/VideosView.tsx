@@ -17,21 +17,22 @@ import { useI18n } from '@/lib/i18n'
 
 interface TutorialVideo {
   src: string
+  poster: string
   titleKey: string
   descKey: string
 }
 
 const VIDEOS: TutorialVideo[] = [
-  { src: '/videos/01-register.mp4', titleKey: 'videos.v01.t', descKey: 'videos.v01.d' },
-  { src: '/videos/02-mobile-app.mp4', titleKey: 'videos.v02.t', descKey: 'videos.v02.d' },
-  { src: '/videos/03-desktop-app.mp4', titleKey: 'videos.v03.t', descKey: 'videos.v03.d' },
-  { src: '/videos/04-setup.mp4', titleKey: 'videos.v04.t', descKey: 'videos.v04.d' },
-  { src: '/videos/05-sales.mp4', titleKey: 'videos.v05.t', descKey: 'videos.v05.d' },
-  { src: '/videos/06-stock-reports.mp4', titleKey: 'videos.v06.t', descKey: 'videos.v06.d' },
-  { src: '/videos/07-customers.mp4', titleKey: 'videos.v07.t', descKey: 'videos.v07.d' },
-  { src: '/videos/08-vouchers.mp4', titleKey: 'videos.v08.t', descKey: 'videos.v08.d' },
-  { src: '/videos/09-users.mp4', titleKey: 'videos.v09.t', descKey: 'videos.v09.d' },
-  { src: '/videos/10-offline.mp4', titleKey: 'videos.v10.t', descKey: 'videos.v10.d' },
+  { src: '/videos/01-register.mp4', poster: '/videos/posters/01-register.jpg', titleKey: 'videos.v01.t', descKey: 'videos.v01.d' },
+  { src: '/videos/02-mobile-app.mp4', poster: '/videos/posters/02-mobile-app.jpg', titleKey: 'videos.v02.t', descKey: 'videos.v02.d' },
+  { src: '/videos/03-desktop-app.mp4', poster: '/videos/posters/03-desktop-app.jpg', titleKey: 'videos.v03.t', descKey: 'videos.v03.d' },
+  { src: '/videos/04-setup.mp4', poster: '/videos/posters/04-setup.jpg', titleKey: 'videos.v04.t', descKey: 'videos.v04.d' },
+  { src: '/videos/05-sales.mp4', poster: '/videos/posters/05-sales.jpg', titleKey: 'videos.v05.t', descKey: 'videos.v05.d' },
+  { src: '/videos/06-stock-reports.mp4', poster: '/videos/posters/06-stock-reports.jpg', titleKey: 'videos.v06.t', descKey: 'videos.v06.d' },
+  { src: '/videos/07-customers.mp4', poster: '/videos/posters/07-customers.jpg', titleKey: 'videos.v07.t', descKey: 'videos.v07.d' },
+  { src: '/videos/08-vouchers.mp4', poster: '/videos/posters/08-vouchers.jpg', titleKey: 'videos.v08.t', descKey: 'videos.v08.d' },
+  { src: '/videos/09-users.mp4', poster: '/videos/posters/09-users.jpg', titleKey: 'videos.v09.t', descKey: 'videos.v09.d' },
+  { src: '/videos/10-offline.mp4', poster: '/videos/posters/10-offline.jpg', titleKey: 'videos.v10.t', descKey: 'videos.v10.d' },
 ]
 
 const WATCHED_KEY = 'tijara-videos-watched'
@@ -82,7 +83,12 @@ export default function VideosView() {
               <video
                 controls
                 playsInline
-                preload="metadata"
+                // preload="none" + poster: opening the tab used to fire 10
+                // metadata range-requests before anything was usable — on
+                // mobile data that alone made the screen feel sluggish. The
+                // poster paints instantly; the stream starts on first play.
+                preload="none"
+                poster={v.poster}
                 className="aspect-video w-full bg-black"
                 src={v.src}
                 onEnded={() => markWatched(v.src)}

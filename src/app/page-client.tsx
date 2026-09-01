@@ -26,6 +26,24 @@ function Gate() {
     void bootstrap()
   }, [bootstrap])
 
+  // DB KEEP-ALIVE (POS idle pattern): a shop keeps the app open but clicks
+  // sporadically — >5 quiet minutes lets the serverless database autosuspend,
+  // so the NEXT click pays a ~0.5-1.5s cold-start wake on top of the request.
+  // A tiny /api/health (SELECT 1) ping every 4 minutes while an authenticated
+  // session is on screen keeps the database warm for exactly this usage
+  // pattern. Skipped in hidden tabs and while offline — no wasted requests.
+  React.useEffect(() => {
+    if (!user) return
+    const ping = () => {
+      try {
+        if (document.hidden || !navigator.onLine) return
+        void fetch('/api/health', { keepalive: true }).catch(() => {})
+      } catch {}
+    }
+    const id = window.setInterval(ping, 4 * 60_000)
+    return () => window.clearInterval(id)
+  }, [user])
+
   // Re-bootstrap when connection returns (session may be fresh)
   React.useEffect(() => {
     const onOnline = () => void bootstrap()

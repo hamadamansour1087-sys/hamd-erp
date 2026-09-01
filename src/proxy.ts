@@ -78,7 +78,12 @@ export function proxy(request: NextRequest) {
 }
 
 export const config = {
-  // Include /api (request-id + correlation log) but skip immutable static
-  // assets. CSP itself is harmless on JSON responses.
-  matcher: ['/((?!_next/static|_next/image|favicon.ico).*)'],
+  // Include /api (request-id + correlation log). Skip immutable static assets:
+  // _next/static, images, and the ~140MB of tutorial videos + icons — running
+  // the Edge proxy on those only adds a hop before the CDN answer (CSP on an
+  // mp4/icon response is meaningless; media/img fetches are governed by the
+  // page's own policy).
+  matcher: [
+    '/((?!_next/static|_next/image|favicon.ico|videos/|icons/|robots.txt|manifest.webmanifest|sw.js|sw-manifest.json).*)',
+  ],
 }

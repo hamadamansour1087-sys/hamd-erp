@@ -25,6 +25,29 @@ const nextConfig: NextConfig = {
   async headers() {
     return [
       { source: "/(.*)", headers: securityHeaders },
+      // Tutorial videos (10-14 files, ~5-10MB each): served from public/, so
+      // Vercel's default is `max-age=0, must-revalidate` — every revisit
+      // revalidates ALL of them before playing. A 1-day browser cache with a
+      // week-long SWR window keeps repeat plays instant while capping staleness
+      // (videos are updated rarely; 24h worst-case delay is acceptable).
+      {
+        source: "/videos/:path*",
+        headers: [
+          {
+            key: "Cache-Control",
+            value: "public, max-age=86400, stale-while-revalidate=604800",
+          },
+          { key: "Accept-Ranges", value: "bytes" },
+        ],
+      },
+      // App icons are referenced by fixed paths in the manifest + layout —
+      // effectively immutable, cache for a year.
+      {
+        source: "/icons/:path*",
+        headers: [
+          { key: "Cache-Control", value: "public, max-age=31536000, immutable" },
+        ],
+      },
     ];
   },
 };
