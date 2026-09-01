@@ -1,0 +1,12 @@
+.pgdata
+.env
+.env.*
+db/
+backups/
+download/
+*.log
+.next
+node_modules
+.git
+cap-www/
+android/
