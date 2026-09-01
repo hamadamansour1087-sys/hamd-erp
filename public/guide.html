@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>دليل الاستخدام — H.A.M.D</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family:'Segoe UI',Tahoma,system-ui,sans-serif; background:#f6f8f7; color:#132a20; }
+  header { background:linear-gradient(150deg,#0b2418,#0e3b27); color:#fff; padding:44px 20px 36px; text-align:center; }
+  header .logo { font-size:30px; font-weight:800; letter-spacing:1px; color:#3ddc97; }
+  header h1 { font-size:26px; margin-top:10px; font-weight:700; }
+  header p { color:#bfe3d2; margin-top:8px; font-size:15px; }
+  main { max-width:980px; margin:0 auto; padding:28px 16px 60px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(430px,1fr)); gap:22px; }
+  @media (max-width:520px){ .grid{grid-template-columns:1fr;} }
+  .card { background:#fff; border-radius:16px; overflow:hidden; box-shadow:0 4px 18px rgba(10,40,25,.08); }
+  .card video { width:100%; aspect-ratio:16/9; background:#000; display:block; }
+  .card.vert video { aspect-ratio:9/16; max-height:560px; margin:0 auto; }
+  .body { padding:16px 18px 18px; }
+  .num { display:inline-block; background:#e6f4ee; color:#008156; font-weight:800; font-size:13px;
+         padding:4px 12px; border-radius:14px; margin-bottom:8px; }
+  .card h2 { font-size:18px; margin-bottom:6px; }
+  .card p { font-size:14px; color:#5c6f66; line-height:1.7; margin-bottom:12px; }
+  a.dl { display:inline-block; font-size:13.5px; color:#008156; font-weight:700; text-decoration:none;
+         border:1.5px solid #b5e2cf; padding:7px 16px; border-radius:18px; }
+  a.dl:hover { background:#e6f4ee; }
+  footer { text-align:center; color:#7d938a; font-size:13px; padding:26px 16px 40px; }
+  footer a { color:#008156; text-decoration:none; font-weight:700; }
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">H.A.M.D</div>
+  <h1>دليل الاستخدام — سلسلة فيديوهات تعليمية</h1>
+  <p>ستة فيديوهات قصيرة تنقلك من التسجيل إلى إدارة محلك باحتراف</p>
+</header>
+<main>
+  <div class="grid">
+    <div class="card">
+      <video controls preload="metadata" src="/videos/01-register.mp4"></video>
+      <div class="body">
+        <span class="num">الفيديو ١</span>
+        <h2>التسجيل في المنصة والموافقة</h2>
+        <p>كيف تسجل شركتك، وماذا يحدث لطلبك، وكيف يوافق مالك المنصة ويفعّل الحساب.</p>
+        <a class="dl" href="/videos/01-register.mp4" download>تحميل الفيديو ⬇</a>
+      </div>
+    </div>
+    <div class="card vert">
+      <video controls preload="metadata" src="/videos/02-mobile-app.mp4"></video>
+      <div class="body">
+        <span class="num">الفيديو ٢</span>
+        <h2>تثبيت تطبيق الموبايل</h2>
+        <p>ثبّت البرنامج على أندرويد أو آيفون من المتصفح مباشرة — بدون متجر التطبيقات.</p>
+        <a class="dl" href="/videos/02-mobile-app.mp4" download>تحميل الفيديو ⬇</a>
+      </div>
+    </div>
+    <div class="card">
+      <video controls preload="metadata" src="/videos/03-desktop-app.mp4"></video>
+      <div class="body">
+        <span class="num">الفيديو ٣</span>
+        <h2>تثبيت برنامج الكمبيوتر</h2>
+        <p>حوّل الموقع إلى برنامج مكتبي بنافذته الخاصة وأيقونة على سطح المكتب.</p>
+        <a class="dl" href="/videos/03-desktop-app.mp4" download>تحميل الفيديو ⬇</a>
+      </div>
+    </div>
+    <div class="card">
+      <video controls preload="metadata" src="/videos/04-setup.mp4"></video>
+      <div class="body">
+        <span class="num">الفيديو ٤</span>
+        <h2>الإعدادات وإدخال البيانات</h2>
+        <p>أضف تصنيفاتك ومنتجاتك بأسعارها ومخزونها، وسجّل عملاءك أول مرة.</p>
+        <a class="dl" href="/videos/04-setup.mp4" download>تحميل الفيديو ⬇</a>
+      </div>
+    </div>
+    <div class="card">
+      <video controls preload="metadata" src="/videos/05-sales.mp4"></video>
+      <div class="body">
+        <span class="num">الفيديو ٥</span>
+        <h2>البيع وإصدار الفواتير</h2>
+        <p>بيع سريع من نقطة البيع: سلة، خصم، ضريبة، فاتورة مرقمة وطباعة A4 أو حرارية.</p>
+        <a class="dl" href="/videos/05-sales.mp4" download>تحميل الفيديو ⬇</a>
+      </div>
+    </div>
+    <div class="card">
+      <video controls preload="metadata" src="/videos/06-stock-reports.mp4"></video>
+      <div class="body">
+        <span class="num">الفيديو ٦</span>
+        <h2>المخزون والتقارير والحسابات</h2>
+        <p>أرصدة المخزون، سجل الحركة، المصروفات والسندات، وتقارير المبيعات والأرباح.</p>
+        <a class="dl" href="/videos/06-stock-reports.mp4" download>تحميل الفيديو ⬇</a>
+      </div>
+    </div>
+  </div>
+</main>
+<footer>
+  H.A.M.D — نظام إدارة المخازن والمحلات · <a href="/">العودة إلى الموقع</a>
+</footer>
+</body>
+</html>
