@@ -1,0 +1,22 @@
+{
+  "out": "download/videos/hamdlabs-01-الدخول-والإعدادات-عينة.mp4",
+  "music": "assets-video/music/loop.wav",
+  "music_db": -14,
+  "segments": [
+    { "png": "assets-dl/caps/dl1/title.png", "dur": 4.2, "zoom": "in" },
+    { "png": "assets-dl/frames/dl1/01-landing.png", "dur": 3.4, "zoom": "in", "cap": "assets-dl/caps/dl1/s1.png" },
+    { "png": "assets-dl/frames/dl1/02-login-form.png", "dur": 2.6, "zoom": "out" },
+    { "png": "assets-dl/frames/dl1/03-email-filled.png", "dur": 3.2, "zoom": "in", "cap": "assets-dl/caps/dl1/s2.png" },
+    { "png": "assets-dl/frames/dl1/04-password-filled.png", "dur": 2.8, "zoom": "out", "cap": "assets-dl/caps/dl1/s3.png" },
+    { "png": "assets-dl/frames/dl1/05-login-loading.png", "dur": 2.6, "zoom": "in", "cap": "assets-dl/caps/dl1/n1.png" },
+    { "png": "assets-dl/frames/dl1/06-dashboard.png", "dur": 4.4, "zoom": "in", "cap": "assets-dl/caps/dl1/s4.png" },
+    { "png": "assets-dl/frames/dl1/07-system-menu.png", "dur": 3.4, "zoom": "out", "cap": "assets-dl/caps/dl1/s5.png" },
+    { "png": "assets-dl/frames/dl1/08-settings-lab.png", "dur": 4.2, "zoom": "in", "cap": "assets-dl/caps/dl1/s6.png" },
+    { "png": "assets-dl/frames/dl1/09-numbering.png", "dur": 3.0, "zoom": "in", "cap": "assets-dl/caps/dl1/n2.png" },
+    { "png": "assets-dl/frames/dl1/10-worktypes.png", "dur": 3.0, "zoom": "out", "cap": "assets-dl/caps/dl1/n3.png" },
+    { "png": "assets-dl/frames/dl1/11-users.png", "dur": 3.0, "zoom": "in", "cap": "assets-dl/caps/dl1/n4.png" },
+    { "png": "assets-dl/frames/dl1/12-backup.png", "dur": 3.2, "zoom": "out", "cap": "assets-dl/caps/dl1/n5.png" },
+    { "png": "assets-dl/frames/dl1/13-saved.png", "dur": 3.8, "zoom": "in", "cap": "assets-dl/caps/dl1/s7.png" },
+    { "png": "assets-dl/caps/dl1/outro.png", "dur": 5.2, "zoom": "in" }
+  ]
+}
