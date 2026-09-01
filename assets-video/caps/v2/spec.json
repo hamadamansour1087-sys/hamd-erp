@@ -1,0 +1,75 @@
+{
+ "cards": [
+  {
+   "name": "title",
+   "type": "title",
+   "orientation": "portrait",
+   "badge": "الفيديو 2 من 6",
+   "title": "ثبّت التطبيق على موبايلك",
+   "sub": "أندرويد وآيفون — بدون متجر التطبيقات"
+  },
+  {
+   "name": "s1",
+   "type": "step",
+   "num": "١",
+   "title": "افتح المتصفح وادخل على موقعك",
+   "sub": "hamd-erp.vercel.app",
+   "orientation": "portrait"
+  },
+  {
+   "name": "n1",
+   "type": "note",
+   "title": "سجّل دخولك كالعادة — البرنامج يعمل داخل المتصفح",
+   "orientation": "portrait"
+  },
+  {
+   "name": "s2",
+   "type": "step",
+   "num": "٢",
+   "title": "افتح قائمة المتصفح ⋮",
+   "sub": "القائمة أعلى يمين الشاشة في كروم",
+   "orientation": "portrait"
+  },
+  {
+   "name": "s3",
+   "type": "step",
+   "num": "٣",
+   "title": "اختر «إضافة إلى الشاشة الرئيسية»",
+   "orientation": "portrait"
+  },
+  {
+   "name": "s4",
+   "type": "step",
+   "num": "٤",
+   "title": "اضغط «إضافة» للتأكيد",
+   "orientation": "portrait"
+  },
+  {
+   "name": "n2",
+   "type": "note",
+   "title": "أيقونة H.A.M.D ظهرت على شاشة موبايلك",
+   "orientation": "portrait"
+  },
+  {
+   "name": "s5",
+   "type": "step",
+   "num": "٥",
+   "title": "افتحها في أي وقت — تعمل كتطبيق كامل",
+   "sub": "بدون شريط متصفح، وتفتح أسرع",
+   "orientation": "portrait"
+  },
+  {
+   "name": "outro",
+   "type": "outro",
+   "orientation": "portrait",
+   "title": "برنامجك في جيبك الآن",
+   "lines": [
+    "لا تحتاج متجر تطبيقات",
+    "تحديث تلقائي دائماً",
+    "يعمل مع الموقع والفواتير",
+    "نفس الحساب على كل الأجهزة"
+   ],
+   "cta": "الفيديو التالي: تثبيت برنامج الكمبيوتر"
+  }
+ ]
+}

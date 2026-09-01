@@ -1,0 +1,55 @@
+{
+ "out": "download/videos/02-تطبيق-الموبايل.mp4",
+ "w": 1080,
+ "h": 1920,
+ "music": "assets-video/music/loop.wav",
+ "music_db": -14,
+ "segments": [
+  {
+   "png": "assets-video/caps/v2/title.png",
+   "dur": 4.4,
+   "zoom": "in"
+  },
+  {
+   "png": "assets-video/frames/v2/02-real-login.png",
+   "dur": 5.6,
+   "zoom": "in",
+   "cap": "assets-video/caps/v2/s1.png"
+  },
+  {
+   "png": "assets-video/frames/v2/mock-menu.png",
+   "dur": 5.0,
+   "zoom": "in",
+   "cap": "assets-video/caps/v2/s2.png"
+  },
+  {
+   "png": "assets-video/frames/v2/mock-menu.png",
+   "dur": 3.6,
+   "zoom": "out",
+   "cap": "assets-video/caps/v2/s3.png"
+  },
+  {
+   "png": "assets-video/frames/v2/mock-confirm.png",
+   "dur": 4.6,
+   "zoom": "in",
+   "cap": "assets-video/caps/v2/s4.png"
+  },
+  {
+   "png": "assets-video/frames/v2/mock-home.png",
+   "dur": 5.0,
+   "zoom": "in",
+   "cap": "assets-video/caps/v2/n2.png"
+  },
+  {
+   "png": "assets-video/frames/v2/06-real-dashboard.png",
+   "dur": 6.2,
+   "zoom": "in",
+   "cap": "assets-video/caps/v2/s5.png"
+  },
+  {
+   "png": "assets-video/caps/v2/outro.png",
+   "dur": 5.4,
+   "zoom": "in"
+  }
+ ]
+}

@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl"><head><meta charset="utf-8">
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; font-family:'Amiri','FreeSans',sans-serif; }
+  body { width:540px; height:960px; overflow:hidden; position:relative;
+         background:linear-gradient(160deg,#0b1512,#123324); }
+  .shot { width:540px; height:960px; object-fit:cover; object-position:top; opacity:.92; }
+  .dim { position:absolute; inset:0; background:rgba(4,12,8,.45); }
+  .chrome-menu { position:absolute; left:18px; top:54px; width:250px; background:#fff;
+                 border-radius:14px; box-shadow:0 12px 40px rgba(0,0,0,.45); overflow:hidden; }
+  .menu-row { display:flex; align-items:center; gap:14px; padding:13px 18px; font-size:19px;
+              color:#202124; font-family:system-ui; }
+  .menu-row.hl { background:#e6f4ee; color:#008156; font-weight:700; }
+  .menu-row .ic { width:22px; text-align:center; opacity:.75; }
+  .confirm { position:absolute; left:40px; right:40px; top:330px; background:#fff; border-radius:20px;
+             padding:26px 24px; box-shadow:0 18px 60px rgba(0,0,0,.5); text-align:center; }
+  .confirm h3 { font-size:24px; color:#202124; font-family:system-ui; margin-bottom:18px; }
+  .appicon { width:84px; height:84px; border-radius:22px; margin:0 auto 12px;
+             background:linear-gradient(145deg,#00a86b,#008156); display:flex; align-items:center;
+             justify-content:center; color:#fff; font-size:44px; font-weight:800; font-family:system-ui; }
+  .appname { font-size:20px; color:#5f6368; font-family:system-ui; margin-bottom:20px; }
+  .btnrow { display:flex; gap:14px; justify-content:center; }
+  .btn { padding:11px 34px; border-radius:24px; font-size:20px; font-family:system-ui; }
+  .btn.ghost { background:#f1f3f4; color:#202124; }
+  .btn.ok { background:#008156; color:#fff; font-weight:700; }
+  .homescreen { position:absolute; inset:0;
+                background:linear-gradient(180deg,#1a3c2c 0%,#0e2418 60%,#081711 100%); }
+  .grid { display:grid; grid-template-columns:repeat(4,1fr); gap:34px 20px; padding:70px 34px 0; }
+  .app { text-align:center; }
+  .app .ic { width:76px; height:76px; border-radius:20px; margin:0 auto 8px; display:flex;
+             align-items:center; justify-content:center; font-size:36px; font-family:system-ui; }
+  .app .lb { color:#e8f0ec; font-size:14px; font-family:system-ui; }
+  .i1 { background:linear-gradient(145deg,#f6b73c,#e88b2c); } .i2 { background:linear-gradient(145deg,#4a90e2,#2b5fd9); }
+  .i3 { background:linear-gradient(145deg,#e74c5b,#c62838); } .i4 { background:linear-gradient(145deg,#9b59b6,#7d3ca8); }
+  .hamd-hl { outline:4px solid #00c47f; outline-offset:5px; border-radius:24px; }
+  .dock { position:absolute; bottom:26px; left:24px; right:24px; height:104px; background:rgba(255,255,255,.14);
+          border-radius:26px; display:flex; align-items:center; justify-content:space-around; }
+  .clock { position:absolute; top:26px; left:0; right:0; text-align:center; color:#fff;
+           font-family:system-ui; }
+  .clock .t { font-size:56px; font-weight:200; }
+  .clock .d { font-size:16px; opacity:.85; margin-top:2px; }
+  .tap { position:absolute; border-radius:50%; border:5px solid #00e08a; background:rgba(0,224,138,.3);
+         width:54px; height:54px; }
+</style></head>
+<body id="b">
+<script>
+  const mode = new URLSearchParams(location.search).get('m') || 'menu';
+  const base = document.getElementById('b');
+  const SHOT = 'mobile-login.png';
+  function shot() { return '<img class="shot" src="' + SHOT + '">'; }
+  if (mode === 'menu') {
+    base.innerHTML = shot() + '<div class="dim"></div>' +
+      '<div class="chrome-menu">' +
+      ['↗ تبويب جديد','🕘 السجل','⬇ التنزيلات','⭐ إضافة إلى الشاشة الرئيسية','🖥 عرض سطح المكتب','⚙ الإعدادات']
+      .map(t => '<div class="menu-row' + (t.includes('الشاشة') ? ' hl' : '') + '"><span class="ic">' + t.split(' ')[0] + '</span>' + t.split(' ').slice(1).join(' ') + '</div>').join('') +
+      '</div><div class="tap" style="left:120px;top:96px;"></div>';
+  } else if (mode === 'confirm') {
+    base.innerHTML = shot() + '<div class="dim"></div>' +
+      '<div class="confirm"><h3>إضافة إلى الشاشة الرئيسية</h3>' +
+      '<div class="appicon">H</div><div class="appname">H.A.M.D<br><span style="font-size:15px">hamd-erp.vercel.app</span></div>' +
+      '<div class="btnrow"><div class="btn ghost">إلغاء</div><div class="btn ok">إضافة</div></div></div>';
+  } else if (mode === 'home') {
+    base.innerHTML = '<div class="homescreen">' +
+      '<div class="clock"><div class="t">9:41</div><div class="d">الخميس ١ سبتمبر</div></div>' +
+      '<div class="grid">' +
+      '<div class="app hamd-hl"><div class="ic appicon" style="margin:0 auto 8px">H</div><div class="lb">H.A.M.D</div></div>' +
+      '<div class="app"><div class="ic i1">📞</div><div class="lb">الهاتف</div></div>' +
+      '<div class="app"><div class="ic i2">📷</div><div class="lb">الكاميرا</div></div>' +
+      '<div class="app"><div class="ic i3">💬</div><div class="lb">الرسائل</div></div>' +
+      '<div class="app"><div class="ic i4">🎵</div><div class="lb">الموسيقى</div></div>' +
+      '</div><div class="dock"></div></div>';
+  }
+</script></body></html>

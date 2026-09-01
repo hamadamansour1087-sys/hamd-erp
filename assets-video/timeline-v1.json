@@ -1,0 +1,128 @@
+{
+ "out": "download/videos/01-التسجيل-في-المنصة.mp4",
+ "music": "assets-video/music/loop.wav",
+ "music_db": -14,
+ "segments": [
+  {
+   "png": "assets-video/caps/v1/title.png",
+   "dur": 4.2,
+   "zoom": "in"
+  },
+  {
+   "png": "assets-video/frames/v1/01-landing.png",
+   "dur": 5.6,
+   "zoom": "in",
+   "cap": "assets-video/caps/v1/s1.png"
+  },
+  {
+   "png": "assets-video/frames/v1/02-click-start.png",
+   "dur": 3.6,
+   "zoom": "out"
+  },
+  {
+   "png": "assets-video/frames/v1/03-login-view.png",
+   "dur": 5.2,
+   "zoom": "in",
+   "cap": "assets-video/caps/v1/s2.png"
+  },
+  {
+   "png": "assets-video/frames/v1/04-click-register-tab.png",
+   "dur": 3.4,
+   "zoom": "out"
+  },
+  {
+   "png": "assets-video/frames/v1/05-register-form.png",
+   "dur": 6.4,
+   "zoom": "in",
+   "cap": "assets-video/caps/v1/s3.png"
+  },
+  {
+   "png": "assets-video/frames/v1/06-form-filled.png",
+   "dur": 6.2,
+   "zoom": "in"
+  },
+  {
+   "png": "assets-video/frames/v1/07-click-submit.png",
+   "dur": 3.6,
+   "zoom": "out",
+   "cap": "assets-video/caps/v1/s4.png"
+  },
+  {
+   "png": "assets-video/frames/v1/08-received.png",
+   "dur": 5.8,
+   "zoom": "in",
+   "cap": "assets-video/caps/v1/n1.png"
+  },
+  {
+   "png": "assets-video/frames/v1/09-received-hold.png",
+   "dur": 3.0,
+   "zoom": "out"
+  },
+  {
+   "png": "assets-video/frames/v1/10-login-again.png",
+   "dur": 5.2,
+   "zoom": "in",
+   "cap": "assets-video/caps/v1/s5.png"
+  },
+  {
+   "png": "assets-video/frames/v1/11-owner-credentials.png",
+   "dur": 4.4,
+   "zoom": "in"
+  },
+  {
+   "png": "assets-video/frames/v1/12-click-owner-login.png",
+   "dur": 3.4,
+   "zoom": "out"
+  },
+  {
+   "png": "assets-video/frames/v1/13-platform-console.png",
+   "dur": 6.0,
+   "zoom": "in",
+   "cap": "assets-video/caps/v1/s6.png"
+  },
+  {
+   "png": "assets-video/frames/v1/14-click-approve.png",
+   "dur": 3.8,
+   "zoom": "out",
+   "cap": "assets-video/caps/v1/s7.png"
+  },
+  {
+   "png": "assets-video/frames/v1/15-approved.png",
+   "dur": 5.2,
+   "zoom": "in",
+   "cap": "assets-video/caps/v1/n2.png"
+  },
+  {
+   "png": "assets-video/frames/v1/16-back-to-login.png",
+   "dur": 4.8,
+   "zoom": "in",
+   "cap": "assets-video/caps/v1/s8.png"
+  },
+  {
+   "png": "assets-video/frames/v1/17-new-org-credentials.png",
+   "dur": 4.2,
+   "zoom": "in"
+  },
+  {
+   "png": "assets-video/frames/v1/18-click-new-login.png",
+   "dur": 3.2,
+   "zoom": "out"
+  },
+  {
+   "png": "assets-video/frames/v1/19-new-dashboard.png",
+   "dur": 6.2,
+   "zoom": "in",
+   "cap": "assets-video/caps/v1/n3.png"
+  },
+  {
+   "png": "assets-video/frames/v1/20-new-dashboard-hold.png",
+   "dur": 3.4,
+   "zoom": "out"
+  },
+  {
+   "png": "assets-video/caps/v1/outro.png",
+   "dur": 5.6,
+   "zoom": "in"
+  }
+ ]
+}

@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl"><head><meta charset="utf-8">
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; font-family:'Amiri','FreeSans',sans-serif; }
+  body { width:1920px; height:1080px; overflow:hidden; position:relative;
+         background:linear-gradient(160deg,#0b1512,#123324); }
+  .browser { position:absolute; inset:60px 70px 40px; background:#ffffff; border-radius:16px;
+             box-shadow:0 24px 80px rgba(0,0,0,.5); overflow:hidden; }
+  .bar { height:64px; background:#dee1e6; display:flex; align-items:center; gap:14px; padding:0 20px; }
+  .dots { display:flex; gap:9px; }
+  .dots i { width:15px; height:15px; border-radius:50%; }
+  .d1 { background:#ff5f57; } .d2 { background:#febc2e; } .d3 { background:#28c840; }
+  .url { flex:1; height:40px; background:#fff; border-radius:20px; display:flex; align-items:center;
+         padding:0 18px; color:#5f6368; font-family:system-ui; font-size:17px; direction:ltr;
+         justify-content:space-between; }
+  .inst { width:34px; height:34px; border-radius:50%; display:flex; align-items:center; justify-content:center;
+          font-size:19px; }
+  .inst.hl { outline:4px solid #00c47f; background:#e6f4ee; }
+  .shot { width:100%; height:calc(100% - 64px); object-fit:cover; object-position:top; }
+  .dim { position:absolute; inset:60px 70px 40px; background:rgba(4,12,8,.35); border-radius:16px; }
+  .menu2 { position:absolute; top:130px; left:180px; width:270px; background:#fff; border-radius:12px;
+           box-shadow:0 14px 44px rgba(0,0,0,.4); overflow:hidden; }
+  .mrow { padding:13px 20px; font-family:system-ui; font-size:18px; color:#202124; }
+  .mrow.hl { background:#e6f4ee; color:#008156; font-weight:700; }
+  .dialog { position:absolute; left:50%; top:300px; transform:translateX(-50%); width:430px;
+            background:#fff; border-radius:18px; padding:30px 28px; text-align:center;
+            box-shadow:0 20px 70px rgba(0,0,0,.5); }
+  .dialog h3 { font-family:system-ui; font-size:24px; color:#202124; margin-bottom:16px; }
+  .appicon { width:86px; height:86px; border-radius:22px; margin:0 auto 10px;
+             background:linear-gradient(145deg,#00a86b,#008156); color:#fff; font-size:46px;
+             font-weight:800; font-family:system-ui; display:flex; align-items:center; justify-content:center; }
+  .appname { color:#5f6368; font-family:system-ui; font-size:18px; margin-bottom:20px; }
+  .btnrow { display:flex; gap:14px; justify-content:center; }
+  .btn { padding:11px 36px; border-radius:24px; font-family:system-ui; font-size:19px; }
+  .btn.ghost { background:#f1f3f4; color:#202124; }
+  .btn.ok { background:#008156; color:#fff; font-weight:700; }
+  .standalone { position:absolute; inset:90px 200px 70px; background:#fff; border-radius:14px;
+                box-shadow:0 26px 90px rgba(0,0,0,.55); overflow:hidden; }
+  .stitle { height:46px; background:#0d2418; display:flex; align-items:center; padding:0 18px; gap:12px; }
+  .stitle .t { color:#cfe8dd; font-family:system-ui; font-size:16px; flex:1; }
+  .stitle i { width:13px; height:13px; border-radius:50%; }
+  .sshottop { width:100%; height:calc(100% - 46px); object-fit:cover; object-position:top; }
+  .tag { position:absolute; bottom:34px; left:50%; transform:translateX(-50%); background:#008156;
+         color:#fff; font-family:system-ui; font-weight:700; font-size:22px; padding:12px 40px;
+         border-radius:26px; }
+</style></head>
+<body id="b">
+<script>
+  const mode = new URLSearchParams(location.search).get('m') || 'icon';
+  const base = document.getElementById('b');
+  const SHOT = 'desktop-dash.png';
+  const browser = () => '<div class="browser"><div class="bar"><div class="dots"><i class="d1"></i><i class="d2"></i><i class="d3"></i></div>' +
+    '<div class="url"><span>https://hamd-erp.vercel.app</span>' +
+    '<span class="inst' + (mode !== 'plain' ? ' hl' : '') + '">⊕</span></div></div>' +
+    '<img class="shot" src="' + SHOT + '"></div>';
+  if (mode === 'plain' || mode === 'icon') {
+    base.innerHTML = browser() +
+      (mode === 'icon' ? '<div class="menu2"><div class="mrow">⭐ إضافة إلى الشاشة الرئيسية</div><div class="mrow hl">⊕ تثبيت التطبيق…</div><div class="mrow">🔗 نسخ الرابط</div></div>' : '');
+  } else if (mode === 'dialog') {
+    base.innerHTML = browser() + '<div class="dim"></div>' +
+      '<div class="dialog"><h3>تثبيت هذا التطبيق؟</h3><div class="appicon">H</div>' +
+      '<div class="appname">H.A.M.D — نظام إدارة المخازن والمحلات</div>' +
+      '<div class="btnrow"><div class="btn ghost">إلغاء</div><div class="btn ok">تثبيت</div></div></div>';
+  } else if (mode === 'standalone') {
+    base.innerHTML = '<div class="standalone"><div class="stitle">' +
+      '<i class="d1"></i><i class="d2"></i><i class="d3"></i><span class="t">H.A.M.D — يعمل كتطبيق مستقل</span></div>' +
+      '<img class="sshottop" src="' + SHOT + '"></div>' +
+      '<div class="tag">أُزيلت شريط المتصفح — البرنامج يعمل بنافذته الخاصة</div>';
+  }
+</script></body></html>

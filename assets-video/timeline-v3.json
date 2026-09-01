@@ -1,0 +1,47 @@
+{
+ "out": "download/videos/03-برنامج-الكمبيوتر.mp4",
+ "music": "assets-video/music/loop.wav",
+ "music_db": -14,
+ "segments": [
+  {
+   "png": "assets-video/caps/v3/title.png",
+   "dur": 4.2,
+   "zoom": "in"
+  },
+  {
+   "png": "assets-video/frames/v3/mock-plain.png",
+   "dur": 5.0,
+   "zoom": "in",
+   "cap": "assets-video/caps/v3/s1.png"
+  },
+  {
+   "png": "assets-video/frames/v3/mock-icon.png",
+   "dur": 5.4,
+   "zoom": "in",
+   "cap": "assets-video/caps/v3/s2.png"
+  },
+  {
+   "png": "assets-video/frames/v3/mock-dialog.png",
+   "dur": 4.6,
+   "zoom": "in",
+   "cap": "assets-video/caps/v3/s3.png"
+  },
+  {
+   "png": "assets-video/frames/v3/mock-dialog.png",
+   "dur": 3.2,
+   "zoom": "out",
+   "cap": "assets-video/caps/v3/n1.png"
+  },
+  {
+   "png": "assets-video/frames/v3/mock-standalone.png",
+   "dur": 6.2,
+   "zoom": "in",
+   "cap": "assets-video/caps/v3/s4.png"
+  },
+  {
+   "png": "assets-video/caps/v3/outro.png",
+   "dur": 5.4,
+   "zoom": "in"
+  }
+ ]
+}
