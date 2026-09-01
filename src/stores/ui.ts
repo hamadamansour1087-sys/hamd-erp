@@ -14,8 +14,9 @@ export type ViewKey =
   | 'finance'
   | 'reports'
   | 'settings'
+  | 'videos'
 
-const CASHIER_ALLOWED: ViewKey[] = ['pos', 'sales', 'catalog', 'customers', 'dashboard']
+const CASHIER_ALLOWED: ViewKey[] = ['pos', 'sales', 'catalog', 'customers', 'dashboard', 'videos']
 
 interface UIState {
   view: ViewKey

@@ -21,6 +21,7 @@ const LOADERS: Record<ViewKey, () => Promise<{ default: React.ComponentType }>> 
   finance: () => import('@/views/finance/FinanceView'),
   reports: () => import('@/views/reports/ReportsView'),
   settings: () => import('@/views/settings/SettingsView'),
+  videos: () => import('@/views/videos/VideosView'),
 }
 
 export function ActiveView({ view }: { view: ViewKey }) {

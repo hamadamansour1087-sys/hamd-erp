@@ -14,6 +14,7 @@ import { reportsDict } from './modules/reports'
 import { salesDict } from './modules/sales'
 import { settingsDict } from './modules/settings'
 import { stockDict } from './modules/stock'
+import { videosDict } from './modules/videos'
 
 export type Lang = 'ar' | 'en'
 
@@ -30,6 +31,7 @@ const ALL: { en: Record<string, string>; ar: Record<string, string> }[] = [
   salesDict,
   settingsDict,
   stockDict,
+  videosDict,
 ]
 
 const MERGED = {

@@ -1,0 +1,21 @@
+{
+ "out": "download/videos/09-المستخدمون-والصلاحيات.mp4",
+ "music": "assets-video/music/loop.wav",
+ "music_db": -14,
+ "segments": [
+  {"png": "assets-video/caps/v9/title.png", "dur": 4.0, "zoom": "in"},
+  {"png": "assets-video/frames/v9/01-settings-nav.png", "dur": 4.4, "zoom": "in", "cap": "assets-video/caps/v9/s1.png"},
+  {"png": "assets-video/frames/v9/02-info-tab.png", "dur": 3.0, "zoom": "out"},
+  {"png": "assets-video/frames/v9/03-users-tab.png", "dur": 3.6, "zoom": "in", "cap": "assets-video/caps/v9/s2.png"},
+  {"png": "assets-video/frames/v9/04-users-list.png", "dur": 3.2, "zoom": "in"},
+  {"png": "assets-video/frames/v9/05-click-add.png", "dur": 3.0, "zoom": "out", "cap": "assets-video/caps/v9/s3.png"},
+  {"png": "assets-video/frames/v9/06-dialog.png", "dur": 3.4, "zoom": "in"},
+  {"png": "assets-video/frames/v9/07-filled.png", "dur": 4.6, "zoom": "in", "cap": "assets-video/caps/v9/s4.png"},
+  {"png": "assets-video/frames/v9/08-role-options.png", "dur": 4.6, "zoom": "in", "cap": "assets-video/caps/v9/s5.png"},
+  {"png": "assets-video/frames/v9/09-role-cashier.png", "dur": 2.8, "zoom": "out"},
+  {"png": "assets-video/frames/v9/10-click-save.png", "dur": 3.0, "zoom": "out"},
+  {"png": "assets-video/frames/v9/11-saved.png", "dur": 4.6, "zoom": "in", "cap": "assets-video/caps/v9/n1.png"},
+  {"png": "assets-video/frames/v9/12-hold.png", "dur": 2.6, "zoom": "out"},
+  {"png": "assets-video/caps/v9/outro.png", "dur": 5.0, "zoom": "in"}
+ ]
+}

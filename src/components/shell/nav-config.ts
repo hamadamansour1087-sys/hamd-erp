@@ -6,6 +6,7 @@ import {
   LayoutDashboard,
   MonitorSmartphone,
   Package,
+  PlayCircle,
   Settings,
   ShoppingCart,
   Truck,
@@ -59,6 +60,12 @@ export const NAV_SECTIONS: NavSection[] = [
       { key: 'settings', labelKey: 'nav.settings', icon: Settings },
     ],
   },
+  {
+    labelKey: 'nav.section.learn',
+    items: [
+      { key: 'videos', labelKey: 'nav.videos', icon: PlayCircle },
+    ],
+  },
 ]
 
 export const VIEW_TITLE_KEYS: Record<ViewKey, string> = {
@@ -73,6 +80,7 @@ export const VIEW_TITLE_KEYS: Record<ViewKey, string> = {
   finance: 'nav.finance',
   reports: 'nav.reports',
   settings: 'nav.settings',
+  videos: 'nav.videos',
 }
 
 export const APP_ICON = MonitorSmartphone

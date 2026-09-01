@@ -1,0 +1,23 @@
+{
+ "out": "download/videos/10-العمل-بدون-إنترنت.mp4",
+ "music": "assets-video/music/loop.wav",
+ "music_db": -14,
+ "segments": [
+  {"png": "assets-video/caps/v10/title.png", "dur": 4.0, "zoom": "in"},
+  {"png": "assets-video/frames/v10/01-pos-online.png", "dur": 4.2, "zoom": "in", "cap": "assets-video/caps/v10/s1.png"},
+  {"png": "assets-video/frames/v10/02-pos-hold.png", "dur": 2.6, "zoom": "out"},
+  {"png": "assets-video/frames/v10/03-offline-pill.png", "dur": 4.6, "zoom": "in", "cap": "assets-video/caps/v10/n1.png"},
+  {"png": "assets-video/frames/v10/04-offline-hold.png", "dur": 2.6, "zoom": "out"},
+  {"png": "assets-video/frames/v10/05-add-rice.png", "dur": 4.0, "zoom": "in", "cap": "assets-video/caps/v10/s2.png"},
+  {"png": "assets-video/frames/v10/06-add-sugar.png", "dur": 3.0, "zoom": "in"},
+  {"png": "assets-video/frames/v10/07-cart.png", "dur": 3.0, "zoom": "out"},
+  {"png": "assets-video/frames/v10/08-paid-full.png", "dur": 4.0, "zoom": "in", "cap": "assets-video/caps/v10/s3.png"},
+  {"png": "assets-video/frames/v10/09-checkout-offline.png", "dur": 5.0, "zoom": "in", "cap": "assets-video/caps/v10/n2.png"},
+  {"png": "assets-video/frames/v10/10-queued-hold.png", "dur": 3.0, "zoom": "out"},
+  {"png": "assets-video/frames/v10/11-syncing.png", "dur": 3.0, "zoom": "in"},
+  {"png": "assets-video/frames/v10/12-synced.png", "dur": 4.6, "zoom": "in", "cap": "assets-video/caps/v10/n3.png"},
+  {"png": "assets-video/frames/v10/13-invoices-list.png", "dur": 4.6, "zoom": "in", "cap": "assets-video/caps/v10/s4.png"},
+  {"png": "assets-video/frames/v10/14-hold.png", "dur": 2.6, "zoom": "out"},
+  {"png": "assets-video/caps/v10/outro.png", "dur": 5.4, "zoom": "in"}
+ ]
+}

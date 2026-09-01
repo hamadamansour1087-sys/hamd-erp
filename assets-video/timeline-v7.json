@@ -1,0 +1,21 @@
+{
+ "out": "download/videos/07-العملاء-والموردون.mp4",
+ "music": "assets-video/music/loop.wav",
+ "music_db": -14,
+ "segments": [
+  {"png": "assets-video/caps/v7/title.png", "dur": 4.0, "zoom": "in"},
+  {"png": "assets-video/frames/v7/01-customers-nav.png", "dur": 4.8, "zoom": "in", "cap": "assets-video/caps/v7/s1.png"},
+  {"png": "assets-video/frames/v7/02-customers-view.png", "dur": 3.2, "zoom": "out"},
+  {"png": "assets-video/frames/v7/03-click-add.png", "dur": 3.0, "zoom": "out", "cap": "assets-video/caps/v7/s2.png"},
+  {"png": "assets-video/frames/v7/04-dialog.png", "dur": 3.4, "zoom": "in"},
+  {"png": "assets-video/frames/v7/05-filled.png", "dur": 5.0, "zoom": "in", "cap": "assets-video/caps/v7/s3.png"},
+  {"png": "assets-video/frames/v7/06-click-save.png", "dur": 3.0, "zoom": "out"},
+  {"png": "assets-video/frames/v7/07-saved.png", "dur": 4.6, "zoom": "in", "cap": "assets-video/caps/v7/n1.png"},
+  {"png": "assets-video/frames/v7/08-statement.png", "dur": 5.4, "zoom": "in", "cap": "assets-video/caps/v7/s4.png"},
+  {"png": "assets-video/frames/v7/09-statement-hold.png", "dur": 3.0, "zoom": "out"},
+  {"png": "assets-video/frames/v7/10-suppliers-nav.png", "dur": 4.2, "zoom": "in", "cap": "assets-video/caps/v7/n2.png"},
+  {"png": "assets-video/frames/v7/11-suppliers-list.png", "dur": 3.4, "zoom": "in"},
+  {"png": "assets-video/frames/v7/12-hold.png", "dur": 2.6, "zoom": "out"},
+  {"png": "assets-video/caps/v7/outro.png", "dur": 5.0, "zoom": "in"}
+ ]
+}

@@ -1,0 +1,22 @@
+{
+ "out": "download/videos/08-السندات-والمصروفات.mp4",
+ "music": "assets-video/music/loop.wav",
+ "music_db": -14,
+ "segments": [
+  {"png": "assets-video/caps/v8/title.png", "dur": 4.0, "zoom": "in"},
+  {"png": "assets-video/frames/v8/01-finance-nav.png", "dur": 4.6, "zoom": "in", "cap": "assets-video/caps/v8/s1.png"},
+  {"png": "assets-video/frames/v8/02-receipts-tab.png", "dur": 3.0, "zoom": "out"},
+  {"png": "assets-video/frames/v8/03-click-new.png", "dur": 3.0, "zoom": "out", "cap": "assets-video/caps/v8/s2.png"},
+  {"png": "assets-video/frames/v8/04-dialog.png", "dur": 3.6, "zoom": "in"},
+  {"png": "assets-video/frames/v8/05-customer-options.png", "dur": 4.6, "zoom": "in", "cap": "assets-video/caps/v8/s3.png"},
+  {"png": "assets-video/frames/v8/06-customer-chosen.png", "dur": 4.2, "zoom": "in"},
+  {"png": "assets-video/frames/v8/07-amount-filled.png", "dur": 4.4, "zoom": "in", "cap": "assets-video/caps/v8/s4.png"},
+  {"png": "assets-video/frames/v8/08-click-save.png", "dur": 3.0, "zoom": "out"},
+  {"png": "assets-video/frames/v8/09-saved.png", "dur": 4.8, "zoom": "in", "cap": "assets-video/caps/v8/n1.png"},
+  {"png": "assets-video/frames/v8/10-receipts-list.png", "dur": 4.4, "zoom": "in", "cap": "assets-video/caps/v8/s5.png"},
+  {"png": "assets-video/frames/v8/11-payments-tab.png", "dur": 4.2, "zoom": "in", "cap": "assets-video/caps/v8/s6.png"},
+  {"png": "assets-video/frames/v8/12-expenses-tab.png", "dur": 4.2, "zoom": "in", "cap": "assets-video/caps/v8/s7.png"},
+  {"png": "assets-video/frames/v8/13-hold.png", "dur": 2.6, "zoom": "out"},
+  {"png": "assets-video/caps/v8/outro.png", "dur": 5.0, "zoom": "in"}
+ ]
+}
